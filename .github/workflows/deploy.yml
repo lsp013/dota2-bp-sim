@@ -1,0 +1,70 @@
+name: Update data & deploy
+
+on:
+  schedule:
+    # Weekly, Monday 04:17 UTC. Off-the-hour to avoid GitHub's busy window.
+    - cron: '17 4 * * 1'
+  workflow_dispatch: {}   # manual trigger, e.g. right after a patch drops
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - 'src/**'
+      - 'scripts/**'
+      - '.github/workflows/deploy.yml'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No `npm install` needed: the project has zero runtime dependencies.
+      - name: Run tests
+        run: node --test tests/
+
+      - name: Fetch data
+        run: node scripts/fetch-data.mjs
+
+      - name: Commit refreshed dataset
+        # Only on scheduled/manual runs. A push-triggered run would otherwise
+        # fight with itself; the data is small and changes at most weekly.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data/data.json public/lib
+          if git diff --staged --quiet; then
+            echo "no data change"
+          else
+            git commit -m "chore(data): refresh OpenDota snapshot [skip ci]"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

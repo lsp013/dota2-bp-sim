@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Dota 2 BP 模拟器</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Dota 2 <span>BP 模拟器</span></h1>
+  <button id="metaBtn" class="meta-btn" type="button" aria-label="数据信息">数据</button>
+</header>
+
+<div id="metaPanel" class="meta-panel" hidden></div>
+
+<div id="loading" class="loading">正在加载数据…</div>
+
+<main id="app" hidden>
+  <section class="controls">
+    <div class="weight-row">
+      <label>克制 <output id="wCounterOut">50%</output>
+        <input type="range" id="wCounter" min="0" max="100" value="50">
+      </label>
+      <label>协同 <output id="wSynergyOut">30%</output>
+        <input type="range" id="wSynergy" min="0" max="100" value="30">
+      </label>
+      <label>版本强度 <output id="wBaseOut">20%</output>
+        <input type="range" id="wBase" min="0" max="100" value="20">
+      </label>
+    </div>
+    <div class="weight-row">
+      <label class="min-games">最小样本
+        <select id="minGames">
+          <option value="30" selected>30 场</option>
+          <option value="50">50 场</option>
+          <option value="100">100 场</option>
+        </select>
+      </label>
+      <button id="resetBtn" class="btn danger" type="button">重置 BP</button>
+    </div>
+  </section>
+
+  <section class="teams">
+    <div class="team ours">
+      <h2>我方 <span id="ourCount">0</span>/5</h2>
+      <div id="ourSlots" class="slots"></div>
+    </div>
+    <div class="team theirs">
+      <h2>敌方 <span id="enemyCount">0</span>/5</h2>
+      <div id="enemySlots" class="slots"></div>
+    </div>
+  </section>
+
+  <section class="panels">
+    <div class="panel">
+      <h3>推荐选人</h3>
+      <p class="hint">基于威尔逊下界排序，低样本已自动降权。点按查看依据。</p>
+      <div id="recs" class="recs"></div>
+    </div>
+    <div class="panel">
+      <h3>敌方阵容弱点</h3>
+      <p class="hint">对敌方每个英雄均有较好对位记录的英雄。</p>
+      <div id="weak" class="recs"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>英雄池</h3>
+    <input type="search" id="search" placeholder="搜索英雄…" autocomplete="off">
+    <div id="pool" class="pool"></div>
+  </section>
+</main>
+
+<div id="detail" class="sheet" hidden>
+  <div class="sheet-inner">
+    <button id="detailClose" class="sheet-close" type="button" aria-label="关闭">×</button>
+    <div id="detailBody"></div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
