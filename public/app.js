@@ -20,7 +20,7 @@ const state = {
   enemy: [],
   /** Which team a plain tap on a hero-pool item adds to. */
   activeSide: 'our',
-  weights: { counter: 0.5, synergy: 0.3, base: 0.2 },
+  weights: { counter: 0.7, synergy: 0.2, base: 0.1 },
   minGames: 30,
 };
 

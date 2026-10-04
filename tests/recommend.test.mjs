@@ -173,6 +173,21 @@ test('default weights sum to 1 so scores stay interpretable', () => {
   assert.ok(Math.abs(s - 1) < 1e-9);
 });
 
+test('counter evidence carries the most weight by default', () => {
+  // Locks in a deliberate product decision: this is a counter-pick tool, so the
+  // specific matchup outranks the hero's diffuse global win rate. Co-equal
+  // weighting ranked Ancient Apparition (47.9% overall, 62.9% vs Necrophos)
+  // below heroes with no particular edge against that draft.
+  assert.ok(
+    DEFAULT_WEIGHTS.counter > DEFAULT_WEIGHTS.synergy,
+    'counter must outweigh synergy'
+  );
+  assert.ok(
+    DEFAULT_WEIGHTS.synergy > DEFAULT_WEIGHTS.base,
+    'base is a tiebreaker, not a driver'
+  );
+});
+
 test('MIN_PAIR_GAMES matches the low-tier boundary', () => {
   assert.equal(MIN_PAIR_GAMES, 30);
 });

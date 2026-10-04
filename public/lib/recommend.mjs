@@ -38,10 +38,24 @@
 
 import { isRankable } from './wilson.mjs';
 
+/**
+ * Default term weights. Adjustable in the UI.
+ *
+ * Counter evidence dominates deliberately. This tool exists to answer "what do
+ * I pick into THEIR draft", so the specific matchup is the point; a hero's
+ * global win rate is a diffuse signal that largely duplicates information
+ * already present in the matchup matrix (heroBase pools the same pairs). Making
+ * it co-equal systematically buried matchup specialists — Ancient Apparition
+ * sits at 47.9% overall but beats Necrophos 62.9%, and at 50/30/20 it ranked
+ * #9 instead of #5.
+ *
+ * Base is kept as a tiebreaker rather than dropped, because picking a broadly
+ * weak hero is still a real cost.
+ */
 export const DEFAULT_WEIGHTS = {
-  counter: 0.5,
-  synergy: 0.3,
-  base: 0.2,
+  counter: 0.7,
+  synergy: 0.2,
+  base: 0.1,
 };
 
 /** Minimum games before a matchup pair may influence a score. */
@@ -51,17 +65,26 @@ export const MIN_PAIR_GAMES = 30;
  * Strength of the shrinkage prior, in pseudo-games.
  *
  * A pair observed over n games keeps roughly n/(n+PRIOR_GAMES) of its distance
- * from 50%. So at n=25 half the edge is retained, at n=100 four fifths.
+ * from 50%. At k=15 a 35-game sample keeps ~70% of its edge; a 100-game sample
+ * keeps ~87%.
  *
- * Calibrated deliberately light, because MIN_PAIR_GAMES already excludes
- * everything under 30 games from scoring — the floor is what actually guards
- * against 2-game flukes, so the prior does not need to repeat that job. An
- * earlier value of 60 double-penalised thin samples: it flattened a genuine
- * 62.9% over 35 games (Ancient Apparition vs Necrophos) down to 0.547 while a
- * 60.5% over 119 games kept most of its edge, which pushed the stronger
- * counter-pick out of the visible list for no good reason.
+ * Calibrated LIGHT on purpose. Two forces argue for this:
+ *
+ *  1. MIN_PAIR_GAMES (30) already excludes flukes from scoring, so the prior
+ *     does not need to re-do that job. An earlier k=60 double-penalised thin
+ *     samples and pushed genuine counters out of the visible list.
+ *  2. This is a decision aid for a player who has their own game knowledge.
+ *     Heavy shrinkage discards exactly the niche, low-popularity counter-picks
+ *     (Ancient Apparition's anti-heal vs Necrophos) that a domain expert is
+ *     looking for. The tier labels and the per-pair sample counts on every card
+ *     communicate the uncertainty instead of hiding the signal.
+ *
+ * The statistically conservative alternative would be a much larger prior
+ * (empirical Bayes on typical matchup spread suggests k in the 50-100 range),
+ * which would rank Ancient Apparition around #11 rather than the top 5. That is
+ * a legitimate product choice, not a bug — see README for the tradeoff.
  */
-export const PRIOR_GAMES = 25;
+export const PRIOR_GAMES = 15;
 
 /** Prior mean — 50%, i.e. "an unmeasured matchup is a coin flip". */
 export const PRIOR_P = 0.5;
