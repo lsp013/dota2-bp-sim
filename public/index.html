@@ -45,11 +45,11 @@
   </section>
 
   <section class="teams">
-    <div class="team ours">
+    <div class="team ours" id="teamOur" data-drop="our">
       <h2>我方 <span id="ourCount">0</span>/5</h2>
       <div id="ourSlots" class="slots"></div>
     </div>
-    <div class="team theirs">
+    <div class="team theirs" id="teamEnemy" data-drop="enemy">
       <h2>敌方 <span id="enemyCount">0</span>/5</h2>
       <div id="enemySlots" class="slots"></div>
     </div>
@@ -68,9 +68,18 @@
     </div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="poolPanel" data-drop="pool">
     <h3>英雄池</h3>
-    <input type="search" id="search" placeholder="搜索英雄…" autocomplete="off">
+    <div class="pool-head">
+      <input type="search" id="search" placeholder="搜索英雄…" autocomplete="off">
+      <div class="side-toggle" id="sideToggle" role="group" aria-label="点击英雄加入哪一方">
+        <button type="button" data-side="our" class="active" aria-pressed="true">加入我方</button>
+        <button type="button" data-side="enemy" aria-pressed="false">加入敌方</button>
+      </div>
+    </div>
+    <p class="hint" id="poolHint">
+      点按加入所选一方 · 也可以直接把英雄<b>拖到</b>上方我方/敌方栏位（拖回这里可移除）
+    </p>
     <div id="pool" class="pool"></div>
   </section>
 </main>

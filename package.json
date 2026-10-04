@@ -12,6 +12,6 @@
     "sync": "node scripts/sync-lib.mjs",
     "serve": "node scripts/serve.mjs",
     "test": "node --test tests/",
-    "test:direct": "node tests/wilson.test.mjs && node tests/recommend.test.mjs"
+    "test:direct": "node tests/wilson.test.mjs && node tests/recommend.test.mjs && node tests/draft.test.mjs && node tests/ui.test.mjs"
   }
 }

@@ -11,6 +11,7 @@ import {
   lookupPair,
   heroBase,
 } from './lib/recommend.mjs';
+import { addHero, removeHero, usedHeroes, resolveDrop } from './lib/draft.mjs';
 
 const CDN = 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes';
 
@@ -18,6 +19,8 @@ const state = {
   data: null,
   our: [],
   enemy: [],
+  /** Which team a plain tap on a hero-pool item adds to. */
+  activeSide: 'our',
   weights: { counter: 0.5, synergy: 0.3, base: 0.2 },
   minGames: 30,
 };
@@ -52,6 +55,7 @@ async function boot() {
   $('#app').hidden = false;
   renderMeta();
   bindControls();
+  installDragAndDrop();
   render();
 }
 
@@ -109,6 +113,14 @@ function bindControls() {
 
   $('#search').addEventListener('input', renderPool);
 
+  // Tap target for the hero pool. Without this there was no touch-friendly way
+  // to add an ENEMY hero at all.
+  $('#sideToggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-side]');
+    if (!btn) return;
+    setActiveSide(btn.dataset.side);
+  });
+
   $('#detailClose').addEventListener('click', closeDetail);
   $('#detail').addEventListener('click', (e) => {
     if (e.target.id === 'detail') closeDetail();
@@ -145,6 +157,8 @@ function renderTeams() {
       const h = heroById(id);
       const d = document.createElement('div');
       d.className = 'slot';
+      makeDraggable(d, id, side);
+
       const img = document.createElement('img');
       img.src = iconUrl(h.name);
       img.alt = h.n;
@@ -153,14 +167,10 @@ function renderTeams() {
       label.textContent = h.n;
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.className = 'slot-remove';
       btn.textContent = '×';
       btn.setAttribute('aria-label', `移除 ${h.n}`);
-      btn.addEventListener('click', () => {
-        const arr = side === 'our' ? state.our : state.enemy;
-        const idx = arr.indexOf(id);
-        if (idx >= 0) arr.splice(idx, 1);
-        render();
-      });
+      btn.addEventListener('click', () => removeFrom(side, id));
       d.append(img, label, btn);
       el.appendChild(d);
     }
@@ -169,6 +179,10 @@ function renderTeams() {
   draw(state.enemy, '#enemySlots', 'enemy');
   $('#ourCount').textContent = state.our.length;
   $('#enemyCount').textContent = state.enemy.length;
+
+  // Show which side a tap will fill.
+  $('#teamOur').classList.toggle('active-target', state.activeSide === 'our');
+  $('#teamEnemy').classList.toggle('active-target', state.activeSide === 'enemy');
 }
 
 function renderRecs() {
@@ -303,27 +317,48 @@ function renderWeaknesses() {
   });
 }
 
+function setActiveSide(side) {
+  state.activeSide = side === 'enemy' ? 'enemy' : 'our';
+  for (const btn of document.querySelectorAll('#sideToggle button[data-side]')) {
+    const on = btn.dataset.side === state.activeSide;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  }
+  renderTeams();
+  renderPool();
+}
+
 function renderPool() {
   const el = $('#pool');
   const q = $('#search').value.trim().toLowerCase();
   el.innerHTML = '';
 
-  const used = new Set([...state.our, ...state.enemy]);
+  const used = usedHeroes(teams());
   const list = state.data.heroes.filter((h) => {
     if (!q) return true;
     return h.n.toLowerCase().includes(q) || h.name.toLowerCase().includes(q);
   });
 
+  // Colour-code so it is obvious which team a tap lands in.
+  el.classList.toggle('side-enemy', state.activeSide === 'enemy');
+
   for (const h of list) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'pool-item' + (used.has(h.id) ? ' used' : '');
+    btn.dataset.hero = String(h.id);
+    btn.title = `加入${state.activeSide === 'enemy' ? '敌方' : '我方'}`;
     btn.addEventListener('click', () => {
-      if (state.our.length >= 5) return;
-      if (used.has(h.id)) return;
-      state.our.push(h.id);
-      render();
+      // Consume the click that the drag gesture itself generated; a later,
+      // unrelated click must still work.
+      if (DND.justDragged) {
+        DND.justDragged = false;
+        return;
+      }
+      if (used.has(h.id)) return; // already committed to a side
+      addTo(state.activeSide, h.id);
     });
+    makeDraggable(btn, h.id, null);
 
     const img = document.createElement('img');
     img.src = iconUrl(h.name);
@@ -337,18 +372,262 @@ function renderPool() {
     btn.append(img, span, attr);
     el.appendChild(btn);
   }
+}
 
-  // Long-press / right-click adds to the enemy team (mobile-friendly alt:
-  // the detail sheet has explicit buttons).
-  el.querySelectorAll('.pool-item').forEach((node, i) => {
-    node.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      const h = list[i];
-      if (state.enemy.length >= 5 || used.has(h.id)) return;
-      state.enemy.push(h.id);
-      render();
-    });
-  });
+/* ------------------------------------------------------------------ */
+/* draft mutation                                                      */
+/* ------------------------------------------------------------------ */
+
+const teams = () => ({ our: state.our, enemy: state.enemy });
+
+function applyTeams(next) {
+  state.our = next.our;
+  state.enemy = next.enemy;
+}
+
+/**
+ * Add a hero to a side. Works for BOTH teams — the original UI could only add
+ * to `our`, with enemy picks reachable solely via a right-click handler that
+ * touch devices never fire.
+ */
+function addTo(side, heroId) {
+  const res = addHero(teams(), side, heroId);
+  if (res.changed) {
+    applyTeams(res);
+    render();
+  } else if (res.reason === 'full') {
+    flashTeam(side);
+  }
+  return res.changed;
+}
+
+function removeFrom(side, heroId) {
+  const res = removeHero(teams(), side, heroId);
+  if (res.changed) {
+    applyTeams(res);
+    render();
+  }
+  return res.changed;
+}
+
+/** Briefly highlight a full team so a refused drop is visible, not silent. */
+function flashTeam(side) {
+  const el = side === 'our' ? $('#teamOur') : $('#teamEnemy');
+  if (!el) return;
+  el.classList.add('full-flash');
+  setTimeout(() => el.classList.remove('full-flash'), 600);
+}
+
+/* ------------------------------------------------------------------ */
+/* drag & drop                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pointer-events based drag so it works with mouse AND touch.
+ *
+ * Touch needs care: a finger drag on the pool is normally a page scroll, so on
+ * touch we only begin dragging after a short hold (~180ms). If the finger moves
+ * before the timer fires, we treat it as a scroll and cancel — this keeps the
+ * hero pool scrollable while still allowing drag-and-drop.
+ */
+const DND = {
+  heroId: null,
+  fromSide: null, // null when the drag started in the hero pool
+  pointerId: null,
+  pointerType: null,
+  active: false,
+  /** True once the pointer travelled past MOVE_TOLERANCE while a drag was armed. */
+  moved: false,
+  pressTimer: null,
+  startX: 0,
+  startY: 0,
+  ghost: null,
+  hover: null,
+  justDragged: false,
+};
+
+const HOLD_MS = 180;
+const MOVE_TOLERANCE = 8;
+
+function dropZoneAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  const zone = el?.closest?.('[data-drop]');
+  return zone ? zone.dataset.drop : null;
+}
+
+function setHover(zone) {
+  if (DND.hover === zone) return;
+  if (DND.hover) {
+    const prev = document.querySelector(`[data-drop="${DND.hover}"]`);
+    prev?.classList.remove('drop-hover');
+  }
+  DND.hover = zone;
+  if (zone) {
+    const el = document.querySelector(`[data-drop="${zone}"]`);
+    el?.classList.add('drop-hover');
+  }
+}
+
+function moveGhost(x, y) {
+  if (!DND.ghost) return;
+  DND.ghost.style.left = `${x}px`;
+  DND.ghost.style.top = `${y}px`;
+  setHover(dropZoneAt(x, y));
+}
+
+function startDrag(x, y) {
+  if (DND.active || DND.heroId === null) return;
+  const h = heroById(DND.heroId);
+  if (!h) return;
+
+  DND.active = true;
+  document.body.classList.add('dragging');
+
+  const g = document.createElement('div');
+  g.className = 'drag-ghost';
+  const img = document.createElement('img');
+  img.src = iconUrl(h.name);
+  img.alt = '';
+  const span = document.createElement('span');
+  span.textContent = h.n;
+  g.append(img, span);
+  document.body.appendChild(g);
+  DND.ghost = g;
+  moveGhost(x, y);
+  if (navigator.vibrate) navigator.vibrate(8);
+}
+
+function endDrag() {
+  clearTimeout(DND.pressTimer);
+  DND.pressTimer = null;
+  setHover(null);
+  DND.ghost?.remove();
+  DND.ghost = null;
+  DND.active = false;
+  document.body.classList.remove('dragging');
+}
+
+function onPointerDown(e, heroId, fromSide) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  // Let the × button do its own thing.
+  if (e.target.closest?.('button.slot-remove')) return;
+
+  DND.heroId = heroId;
+  DND.fromSide = fromSide;
+  DND.pointerId = e.pointerId;
+  DND.pointerType = e.pointerType;
+  DND.startX = e.clientX;
+  DND.startY = e.clientY;
+  DND.moved = false;
+
+  clearTimeout(DND.pressTimer);
+  DND.pressTimer = null;
+
+  // Touch: a finger drag on the pool is normally a page scroll, so wait for a
+  // short hold before claiming the gesture. Mouse: no timer at all — we start
+  // the drag from pointermove instead, otherwise every plain click would
+  // register as a drag and the click handler would be suppressed.
+  if (e.pointerType !== 'mouse') {
+    DND.pressTimer = setTimeout(
+      () => startDrag(DND.startX, DND.startY),
+      HOLD_MS
+    );
+  }
+}
+
+function onPointerMove(e) {
+  if (e.pointerId !== DND.pointerId) return;
+
+  const dx = e.clientX - DND.startX;
+  const dy = e.clientY - DND.startY;
+  const dist = Math.hypot(dx, dy);
+
+  if (!DND.active) {
+    if (dist <= MOVE_TOLERANCE) return;
+
+    if (DND.pointerType === 'mouse') {
+      // Mouse/pen: movement is unambiguous, begin dragging now.
+      startDrag(DND.startX, DND.startY);
+      if (!DND.active) return; // startDrag bailed (unknown hero)
+    } else {
+      // Touch moved before the hold completed: this is a scroll, not a drag.
+      clearTimeout(DND.pressTimer);
+      DND.pressTimer = null;
+      DND.pointerId = null;
+      DND.heroId = null;
+      DND.fromSide = null;
+      return;
+    }
+  }
+
+  // Actively dragging: stop the page from scrolling underneath us.
+  if (dist > MOVE_TOLERANCE) DND.moved = true;
+  if (e.cancelable) e.preventDefault();
+  moveGhost(e.clientX, e.clientY);
+}
+
+function onPointerUp(e) {
+  if (e.pointerId !== DND.pointerId) return;
+
+  // A long-press arms the drag, but if the finger never actually travelled the
+  // user meant a tap (or changed their mind). Only a real move counts as a
+  // drag, otherwise the click below would be swallowed and the tap lost.
+  const realDrag = DND.active && DND.moved;
+  const heroId = DND.heroId;
+  const fromSide = DND.fromSide;
+  const zone = realDrag ? dropZoneAt(e.clientX, e.clientY) : null;
+
+  endDrag();
+  DND.pointerId = null;
+  DND.heroId = null;
+  DND.fromSide = null;
+  DND.moved = false;
+
+  if (!realDrag) return; // plain tap — handled by the click listener
+
+  // Swallow the click that follows a drag so it doesn't double-add.
+  DND.justDragged = true;
+  setTimeout(() => {
+    DND.justDragged = false;
+  }, 60);
+
+  // The decision itself lives in src/draft.mjs so it is unit-testable.
+  const action = resolveDrop({ active: realDrag, zone, fromSide });
+  if (action.type === 'add') {
+    addTo(action.side, heroId);
+  } else if (action.type === 'remove') {
+    removeFrom(action.side, heroId);
+  }
+}
+
+function onPointerCancel(e) {
+  if (e.pointerId !== DND.pointerId) return;
+  endDrag();
+  DND.pointerId = null;
+  DND.heroId = null;
+  DND.fromSide = null;
+  DND.moved = false;
+}
+
+function installDragAndDrop() {
+  window.addEventListener('pointermove', onPointerMove, { passive: false });
+  window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('pointercancel', onPointerCancel);
+
+  // Non-passive so a touch drag can suppress page scrolling once it starts.
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (DND.active && e.cancelable) e.preventDefault();
+    },
+    { passive: false }
+  );
+}
+
+/** Mark an element as a drag source for `heroId`. */
+function makeDraggable(el, heroId, fromSide) {
+  el.dataset.hero = String(heroId);
+  el.addEventListener('pointerdown', (e) => onPointerDown(e, heroId, fromSide));
 }
 
 /* ------------------------------------------------------------------ */
