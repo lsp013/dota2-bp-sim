@@ -35,14 +35,25 @@ const SOURCE_LABELS = {
 const state = {
   /** The dataset currently feeding the engine. */
   data: null,
-  /** Which source `data` came from: 'opendota' | 'stratz' | 'both'. */
-  source: 'opendota',
+  /**
+   * Which source `data` came from. Defaults to the merged view: STRATZ's
+   * per-pair samples are 15-50x OpenDota's, and OpenDota's small ones are noisy
+   * enough to reorder the top of the list, so the merge is the most trustworthy
+   * starting point. It degrades to plain OpenDota if STRATZ was never deployed.
+   */
+  source: 'both',
   /** Cache of loaded datasets, keyed by source name. */
   datasets: {},
   our: [],
   enemy: [],
-  /** Which team a plain tap on a hero-pool item adds to. */
-  activeSide: 'our',
+  /**
+   * Which team a plain tap on a hero-pool item adds to.
+   *
+   * Defaults to 'enemy': in a draft you normally enter the picks that already
+   * exist on the other side first, and those are the ones the recommendation is
+   * conditioned on.
+   */
+  activeSide: 'enemy',
   weights: { counter: 0.7, synergy: 0.2, base: 0.1 },
   minGames: 30,
 };
@@ -135,7 +146,7 @@ function updateSourceButtons() {
 
 async function boot() {
   try {
-    state.data = await loadSource('opendota');
+    state.data = await loadSource(state.source);
   } catch (err) {
     $('#loading').innerHTML =
       `数据加载失败：${err.message}<br><br>` +
@@ -148,6 +159,7 @@ async function boot() {
   bindControls();
   installDragAndDrop();
   updateSourceButtons();
+  updateSideButtons();
   render();
 }
 
@@ -389,13 +401,24 @@ function renderRecs() {
 
 function setActiveSide(side) {
   state.activeSide = side === 'enemy' ? 'enemy' : 'our';
+  updateSideButtons();
+  renderTeams();
+  renderPool();
+}
+
+/**
+ * Sync the 加入我方/加入敌方 buttons with `state.activeSide`.
+ *
+ * Called at boot as well as on click: without the boot call the buttons only
+ * got their state from the static HTML, so a non-default `activeSide` would
+ * leave the UI showing the wrong side until the first tap.
+ */
+function updateSideButtons() {
   for (const btn of document.querySelectorAll('#sideToggle button[data-side]')) {
     const on = btn.dataset.side === state.activeSide;
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-pressed', String(on));
   }
-  renderTeams();
-  renderPool();
 }
 
 function renderPool() {
@@ -417,7 +440,11 @@ function renderPool() {
     btn.type = 'button';
     btn.className = 'pool-item' + (used.has(h.id) ? ' used' : '');
     btn.dataset.hero = String(h.id);
-    btn.title = `加入${state.activeSide === 'enemy' ? '敌方' : '我方'}`;
+    btn.title = `${h.n} · 加入${state.activeSide === 'enemy' ? '敌方' : '我方'}`;
+    // Icon-only tiles: the name and the attribute letters were visual noise in a
+    // grid you navigate by recognising portraits. The name stays as the
+    // accessible label and the hover tooltip, so it is still discoverable.
+    btn.setAttribute('aria-label', btn.title);
     btn.addEventListener('click', () => {
       // Consume the click that the drag gesture itself generated; a later,
       // unrelated click must still work.
@@ -432,14 +459,10 @@ function renderPool() {
 
     const img = document.createElement('img');
     img.src = iconUrl(h.name);
-    img.alt = h.n;
+    // Decorative: the button already carries the name.
+    img.alt = '';
     img.loading = 'lazy';
-    const span = document.createElement('span');
-    span.textContent = h.n;
-    const attr = document.createElement('span');
-    attr.className = 'attr';
-    attr.textContent = h.attr.slice(0, 3).toUpperCase();
-    btn.append(img, span, attr);
+    btn.append(img);
     el.appendChild(btn);
   }
 }

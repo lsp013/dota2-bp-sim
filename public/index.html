@@ -61,8 +61,8 @@
       <div class="pool-head">
         <input type="search" id="search" placeholder="搜索英雄…" autocomplete="off">
         <div class="side-toggle" id="sideToggle" role="group" aria-label="点击英雄加入哪一方">
-          <button type="button" data-side="our" class="active" aria-pressed="true">加入我方</button>
-          <button type="button" data-side="enemy" aria-pressed="false">加入敌方</button>
+          <button type="button" data-side="our" aria-pressed="false">加入我方</button>
+          <button type="button" data-side="enemy" class="active" aria-pressed="true">加入敌方</button>
         </div>
       </div>
       <p class="hint">
@@ -82,12 +82,12 @@
 <div id="sourceNote" class="source-note" hidden></div>
 
 <div class="source-fab" id="sourceFab" role="group" aria-label="数据源">
-  <button type="button" data-source="opendota" class="active" aria-pressed="true"
+  <button type="button" data-source="opendota" aria-pressed="false"
           title="OpenDota：滚动近期窗口，全分段，单对位样本中位约 47 场">OpenDota</button>
   <button type="button" data-source="stratz" aria-pressed="false"
           title="STRATZ：一周数据，已校准分段，单对位样本中位约 2000 场">STRATZ</button>
-  <button type="button" data-source="both" aria-pressed="false"
-          title="两者合并：逐对位把场次与胜场相加，大样本占主导">合并</button>
+  <button type="button" data-source="both" class="active" aria-pressed="true"
+          title="两者合并（默认）：逐对位把场次与胜场相加，大样本占主导">合并</button>
 </div>
 
 <div id="detail" class="sheet" hidden>

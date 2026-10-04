@@ -232,21 +232,21 @@ teamEnemy.className = 'team theirs';
 teamEnemy.setAttribute('data-drop', 'enemy');
 byId.set('teamEnemy', teamEnemy);
 
-// Side toggle with two buttons, as in index.html.
+// Side toggle with two buttons, mirroring index.html (enemy armed by default).
 const toggle = byId.get('sideToggle');
 for (const side of ['our', 'enemy']) {
   const b = new El('button');
   b.setAttribute('data-side', side);
-  if (side === 'our') b.className = 'active';
+  if (side === 'enemy') b.className = 'active';
   toggle.appendChild(b);
 }
 
-// Data-source switcher with three buttons, as in index.html.
+// Data-source switcher with three buttons, mirroring index.html (merged default).
 const fab = byId.get('sourceFab');
 for (const src of ['opendota', 'stratz', 'both']) {
   const b = new El('button');
   b.setAttribute('data-source', src);
-  if (src === 'opendota') b.className = 'active';
+  if (src === 'both') b.className = 'active';
   fab.appendChild(b);
 }
 
@@ -388,6 +388,37 @@ function dragTo(el, zone, pointerType = 'mouse') {
 /* ------------------------------------------------------------------ */
 /* tests                                                               */
 /* ------------------------------------------------------------------ */
+
+/* Default-state assertions run FIRST: later tests mutate the module state, so
+   anything about the initial configuration has to be observed before them. */
+
+test('boot defaults to the merged data source', () => {
+  assert.deepEqual(activeSources(), ['both'], 'merged is the default source');
+});
+
+test('the side toggle defaults to 加入敌方, and the buttons match the state', () => {
+  const active = byId.get('sideToggle').children.filter((b) => b._classes.has('active'));
+  assert.equal(active.length, 1, 'exactly one side is armed');
+  assert.equal(active[0].dataset.side, 'enemy', 'enemy is the default tap target');
+});
+
+test('a pool tap with the default settings records an ENEMY pick', () => {
+  // Pins the behaviour the default exists for: entering the opposing draft first.
+  tapPoolItem(1);
+  assert.equal(count('enemy'), 1);
+  assert.equal(count('our'), 0);
+  tapPoolItem(1); // undo not needed; resetDraft in later tests clears it
+});
+
+test('the hero-pool tiles are icons only, with the name kept as a label', () => {
+  const pool = q('pool');
+  assert.ok(pool.children.length > 0);
+  for (const tile of pool.children.slice(0, 5)) {
+    assert.deepEqual(tile.children.map((c) => c.tagName), ['IMG'],
+      'no name or attribute text nodes remain');
+    assert.ok((tile._attrs['aria-label'] ?? '').length > 1, 'accessible name retained');
+  }
+});
 
 test('tapping a pool hero adds it to OUR team', async () => {
   await resetDraft();
@@ -598,10 +629,6 @@ const clickSource = (src) => {
 const activeSources = () =>
   byId.get('sourceFab').children.filter((b) => b._classes.has('active')).map((b) => b.dataset.source);
 
-test('OpenDota is the default source and only one button is active', () => {
-  assert.deepEqual(activeSources(), ['opendota']);
-});
-
 test('switching to STRATZ lazily loads its file and re-renders', async () => {
   await resetDraft();
   clickToggle('enemy');
@@ -621,6 +648,13 @@ test('switching to STRATZ lazily loads its file and re-renders', async () => {
   assert.match(q('metaPanel').innerHTML, /STRATZ/);
   assert.ok(q('recs').children.length > 0, 'recommendations render from the STRATZ dataset');
   assert.deepEqual(activeSources(), ['stratz']);
+});
+
+test('switching back to OpenDota works from the merged default', async () => {
+  clickSource('opendota');
+  await settle();
+  assert.match(q('metaPanel').innerHTML, /OpenDota/);
+  assert.deepEqual(activeSources(), ['opendota']);
 });
 
 test('switching to 合并 combines both sources and says so', async () => {
