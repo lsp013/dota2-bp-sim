@@ -312,6 +312,71 @@ table.mu .who img { width: 22px; height: 22px; border-radius: 3px; }
   border-left: 3px solid var(--yellow); border-radius: 4px;
 }
 
+/* ---------- data-source switcher (bottom-right) ---------- */
+.source-fab {
+  position: fixed;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 40;
+  display: flex;
+  background: rgba(22, 27, 34, .96);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+  backdrop-filter: blur(8px);
+  transition: opacity .15s, border-color .15s;
+}
+.source-fab button {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.source-fab button:hover { color: var(--text); }
+.source-fab button.active {
+  background: #1f6feb;
+  color: #fff;
+  font-weight: 600;
+  cursor: default;
+}
+.source-fab.loading { opacity: .55; pointer-events: none; }
+.source-fab.failed {
+  border-color: var(--red);
+  animation: shake .3s ease-in-out 2;
+}
+@media (max-width: 420px) {
+  .source-fab button { padding: 7px 9px; font-size: 11px; }
+}
+
+/* Explains a failed switch (e.g. the STRATZ file was never deployed). */
+.source-note {
+  position: fixed;
+  right: 12px;
+  bottom: calc(58px + env(safe-area-inset-bottom));
+  z-index: 41;
+  max-width: min(320px, calc(100vw - 24px));
+  background: #2d1b1b;
+  border: 1px solid var(--red);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  cursor: pointer;
+}
+
+/* Leave room so the switcher never covers the last row of the hero pool. */
+main { padding-bottom: 64px; }
+
 /* ---------- drag & drop ---------- */
 body.dragging {
   user-select: none;

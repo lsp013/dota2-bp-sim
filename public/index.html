@@ -79,6 +79,17 @@
   </section>
 </main>
 
+<div id="sourceNote" class="source-note" hidden></div>
+
+<div class="source-fab" id="sourceFab" role="group" aria-label="数据源">
+  <button type="button" data-source="opendota" class="active" aria-pressed="true"
+          title="OpenDota：滚动近期窗口，全分段，单对位样本中位约 47 场">OpenDota</button>
+  <button type="button" data-source="stratz" aria-pressed="false"
+          title="STRATZ：一周数据，已校准分段，单对位样本中位约 2000 场">STRATZ</button>
+  <button type="button" data-source="both" aria-pressed="false"
+          title="两者合并：逐对位把场次与胜场相加，大样本占主导">合并</button>
+</div>
+
 <div id="detail" class="sheet" hidden>
   <div class="sheet-inner">
     <button id="detailClose" class="sheet-close" type="button" aria-label="关闭">×</button>

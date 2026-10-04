@@ -11,11 +11,34 @@ import {
   heroBase,
 } from './lib/recommend.mjs';
 import { addHero, removeHero, usedHeroes, resolveDrop } from './lib/draft.mjs';
+import { mergeDatasets } from './lib/merge.mjs';
 
 const CDN = 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes';
 
+/**
+ * Where each selectable data source lives.
+ *
+ * Both files have the same shape, so the engine, tiers and UI are agnostic.
+ * They are loaded lazily: STRATZ is ~1 MB and most sessions never need it.
+ */
+const SOURCE_FILES = {
+  opendota: 'data/data.json',
+  stratz: 'data/data-stratz.json',
+};
+
+const SOURCE_LABELS = {
+  opendota: 'OpenDota',
+  stratz: 'STRATZ',
+  both: 'OpenDota + STRATZ',
+};
+
 const state = {
+  /** The dataset currently feeding the engine. */
   data: null,
+  /** Which source `data` came from: 'opendota' | 'stratz' | 'both'. */
+  source: 'opendota',
+  /** Cache of loaded datasets, keyed by source name. */
+  datasets: {},
   our: [],
   enemy: [],
   /** Which team a plain tap on a hero-pool item adds to. */
@@ -35,15 +58,84 @@ function pct(x) {
   return `${(x * 100).toFixed(1)}%`;
 }
 
+/**
+ * Load a dataset by source name, caching the result.
+ *
+ * 'both' is derived in the browser from the other two rather than shipped as a
+ * third file: merging is a pure function over the two datasets and we already
+ * have it, so a third ~1 MB artifact would buy nothing.
+ */
+async function loadSource(source) {
+  if (state.datasets[source]) return state.datasets[source];
+
+  if (source === 'both') {
+    const base = await loadSource('opendota');
+    // STRATZ is optional: if it was never deployed the merge degrades to
+    // plain OpenDota rather than failing.
+    const extra = await loadSource('stratz').catch(() => null);
+    const merged = mergeDatasets(base, extra, { label: 'OpenDota+STRATZ' });
+    state.datasets.both = merged;
+    return merged;
+  }
+
+  const path = SOURCE_FILES[source];
+  if (!path) throw new Error(`未知数据源 ${source}`);
+
+  const res = await fetch(path, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const ds = await res.json();
+  if (!ds?.matchups || !ds?.heroes) throw new Error('数据文件格式不对');
+  state.datasets[source] = ds;
+  return ds;
+}
+
+async function setSource(source) {
+  if (source === state.source) return;
+  const fab = $('#sourceFab');
+  const previous = state.source;
+
+  fab?.classList.add('loading');
+  try {
+    const ds = await loadSource(source);
+    state.data = ds;
+    state.source = source;
+    updateSourceButtons();
+    renderMeta();
+    render();
+  } catch (err) {
+    // Most likely cause: the STRATZ file was never deployed.
+    fab?.classList.add('failed');
+    setTimeout(() => fab?.classList.remove('failed'), 900);
+    const note = $('#sourceNote');
+    if (note) {
+      note.hidden = false;
+      note.textContent =
+        source === 'stratz' && !state.datasets.stratz
+          ? 'STRATZ 数据未部署（缺少 public/data/data-stratz.json）。运行 scripts/build-stratz.mjs 并推送即可。'
+          : `切换失败：${err.message}`;
+    }
+    state.source = previous;
+    updateSourceButtons();
+  } finally {
+    fab?.classList.remove('loading');
+  }
+}
+
+function updateSourceButtons() {
+  for (const btn of document.querySelectorAll('#sourceFab button[data-source]')) {
+    const on = btn.dataset.source === state.source;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* data load                                                           */
 /* ------------------------------------------------------------------ */
 
 async function boot() {
   try {
-    const res = await fetch('data/data.json', { cache: 'no-cache' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    state.data = await res.json();
+    state.data = await loadSource('opendota');
   } catch (err) {
     $('#loading').innerHTML =
       `数据加载失败：${err.message}<br><br>` +
@@ -55,6 +147,7 @@ async function boot() {
   renderMeta();
   bindControls();
   installDragAndDrop();
+  updateSourceButtons();
   render();
 }
 
@@ -64,16 +157,34 @@ async function boot() {
 
 function renderMeta() {
   const m = state.data.meta;
-  const s = m.sampleStats;
-  const d = new Date(m.builtAt);
+  const s = m.sampleStats ?? {};
+  // STRATZ cannot be refreshed by CI (its API is behind Cloudflare bot
+  // protection, so it is pulled by hand from a browser). Show when the data was
+  // actually pulled, not just when this file was built.
+  const pulled = m.sourcePulledAt ?? m.builtAt;
+  const d = pulled ? new Date(pulled) : null;
+  const ageDays = d ? (Date.now() - d.getTime()) / 86400000 : null;
+  const stale = ageDays != null && ageDays > 21;
+  const merged = m.merged
+    ? `<div>合并构成：两边都有 <b>${m.merged.pairsInBoth.toLocaleString()}</b> ·
+         仅 OpenDota <b>${m.merged.pairsFromAOnly.toLocaleString()}</b> ·
+         仅 STRATZ <b>${m.merged.pairsFromBOnly.toLocaleString()}</b></div>`
+    : '';
   $('#metaPanel').innerHTML = `
+    <div>当前数据源 <b>${SOURCE_LABELS[state.source] ?? m.source}</b>
+      ${m.bracket ? `· 分段 <b>${String(m.bracket).replace(/[\[\]]/g, '').replace(/,\s*/g, ', ')}</b>` : ''}</div>
     <div>版本 <b>${m.patch ?? '未知'}</b>
       ${m.patchDate ? `(${new Date(m.patchDate).toLocaleDateString('zh-CN')})` : ''}</div>
-    <div>数据源 <b>${m.source}</b> · 抓取于 <b>${d.toLocaleString('zh-CN')}</b></div>
-    <div>英雄 <b>${m.heroesOk}/${m.heroesTotal}</b> · 对位组合 <b>${m.pairs.toLocaleString()}</b>
-      （可排序 <b>${m.rankablePairs.toLocaleString()}</b>）</div>
-    <div>单对位样本量：中位 <b>${s.median}</b> 场 · 75分位 <b>${s.p75}</b> · 90分位 <b>${s.p90}</b> · 最大 <b>${s.max}</b></div>
-    <div style="margin-top:6px">${m.note}</div>
+    <div>抓取于 <b>${d ? d.toLocaleString('zh-CN') : '未知'}</b>
+      ${ageDays != null ? `<span class="tag ${stale ? 't-low' : 't-high'}">${ageDays < 1 ? '今天' : Math.round(ageDays) + ' 天前'}</span>` : ''}
+      ${stale ? '<br><b>数据可能已过期</b>——OpenDota 每周自动刷新，STRATZ 需手动重新抓取' : ''}</div>
+    <div>英雄 <b>${m.heroesOk}/${m.heroesTotal}</b> · 对位组合 <b>${(m.pairs ?? 0).toLocaleString()}</b>
+      （可排序 <b>${(m.rankablePairs ?? 0).toLocaleString()}</b>）</div>
+    <div>单对位样本量：中位 <b>${s.median ?? '—'}</b> 场 ·
+      75分位 <b>${s.p75 ?? '—'}</b> · 90分位 <b>${s.p90 ?? '—'}</b> ·
+      最大 <b>${(s.max ?? 0).toLocaleString()}</b></div>
+    ${merged}
+    <div style="margin-top:6px">${m.note ?? ''}</div>
   `;
 }
 
@@ -118,6 +229,17 @@ function bindControls() {
     const btn = e.target.closest('button[data-side]');
     if (!btn) return;
     setActiveSide(btn.dataset.side);
+  });
+
+  // Data-source switcher (bottom-right).
+  $('#sourceFab')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-source]');
+    if (!btn) return;
+    setSource(btn.dataset.source);
+  });
+  $('#sourceNote')?.addEventListener('click', () => {
+    const n = $('#sourceNote');
+    if (n) n.hidden = true;
   });
 
   $('#detailClose').addEventListener('click', closeDetail);

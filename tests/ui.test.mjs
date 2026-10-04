@@ -206,6 +206,7 @@ const documentStub = {
 const IDS = [
   'app', 'loading', 'metaBtn', 'metaPanel', 'detail', 'detailBody', 'detailClose',
   'ourSlots', 'enemySlots', 'ourCount', 'enemyCount', 'recs', 'poolPanel',
+  'sourceFab', 'sourceNote',
   'pool', 'search', 'sideToggle', 'resetBtn', 'minGames',
   'wCounter', 'wSynergy', 'wBase', 'wCounterOut', 'wSynergyOut', 'wBaseOut',
 ];
@@ -238,6 +239,15 @@ for (const side of ['our', 'enemy']) {
   b.setAttribute('data-side', side);
   if (side === 'our') b.className = 'active';
   toggle.appendChild(b);
+}
+
+// Data-source switcher with three buttons, as in index.html.
+const fab = byId.get('sourceFab');
+for (const src of ['opendota', 'stratz', 'both']) {
+  const b = new El('button');
+  b.setAttribute('data-source', src);
+  if (src === 'opendota') b.className = 'active';
+  fab.appendChild(b);
 }
 
 /* ------------------------------------------------------------------ */
@@ -287,7 +297,26 @@ const DATASET = {
 
 globalThis.document = documentStub;
 globalThis.window = windowStub;
-globalThis.fetch = async () => ({ ok: true, json: async () => DATASET });
+
+// Serve different content per URL so source switching is actually exercised.
+const STRATZ_DATASET = {
+  ...DATASET,
+  meta: { ...DATASET.meta, source: 'STRATZ', sampleStats: { p25: 500, median: 2000, p75: 4000, p90: 8000, max: 20000 } },
+  matchups: Object.fromEntries(
+    Object.entries(MATCHUPS).map(([h, row]) => [h, Object.fromEntries(
+      Object.entries(row).map(([f, v]) => [f, { ...v, g: 4000, w: 2200, p: 0.55, lb: 0.535, ub: 0.565, t: 'high' }])
+    )])
+  ),
+};
+
+const fetchedUrls = [];
+globalThis.fetch = async (url) => {
+  fetchedUrls.push(String(url));
+  if (String(url).includes('data-stratz')) {
+    return { ok: true, json: async () => STRATZ_DATASET };
+  }
+  return { ok: true, json: async () => DATASET };
+};
 
 // `navigator` exists on Node >= 21 (read-only getter) but NOT on Node 20, which
 // is what CI runs. Define it either way so the vibration path is exercised and
@@ -557,3 +586,66 @@ test('REGRESSION: dragging works when `navigator` does not exist (Node 20 / CI)'
     });
   }
 });
+
+/* ---------------- data-source switcher ---------------- */
+
+const clickSource = (src) => {
+  const btn = byId.get('sourceFab').children.find((b) => b.dataset.source === src);
+  assert.ok(btn, `switcher has a ${src} button`);
+  q('sourceFab').fire('click', { target: btn });
+};
+
+const activeSources = () =>
+  byId.get('sourceFab').children.filter((b) => b._classes.has('active')).map((b) => b.dataset.source);
+
+test('OpenDota is the default source and only one button is active', () => {
+  assert.deepEqual(activeSources(), ['opendota']);
+});
+
+test('switching to STRATZ lazily loads its file and re-renders', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1); // give the engine an enemy so it ranks something
+  clickToggle('our');
+
+  const before = q('metaPanel').innerHTML;
+  clickSource('stratz');
+  await settle();
+  await settle();
+
+  assert.ok(
+    fetchedUrls.some((u) => u.includes('data-stratz')),
+    'the STRATZ dataset must be fetched on demand, not at boot'
+  );
+  assert.notEqual(q('metaPanel').innerHTML, before, 'meta panel reflects the new source');
+  assert.match(q('metaPanel').innerHTML, /STRATZ/);
+  assert.ok(q('recs').children.length > 0, 'recommendations render from the STRATZ dataset');
+  assert.deepEqual(activeSources(), ['stratz']);
+});
+
+test('switching to 合并 combines both sources and says so', async () => {
+  clickSource('both');
+  await settle();
+  await settle();
+  await settle();
+
+  assert.match(
+    q('metaPanel').innerHTML,
+    /OpenDota \+ STRATZ/,
+    'merged mode is labelled'
+  );
+  assert.match(q('metaPanel').innerHTML, /合并构成/, 'merge breakdown shown');
+  assert.deepEqual(activeSources(), ['both']);
+});
+
+test('the merged dataset pools counts from both sources', async () => {
+  // OpenDota fixture pairs are 200 games; STRATZ fixture pairs are 4000.
+  const recs = q('recs');
+  assert.ok(recs.children.length > 0);
+  // Switching back and forth must not re-fetch or corrupt cached datasets.
+  clickSource('opendota');
+  await settle();
+  assert.match(q('metaPanel').innerHTML, /OpenDota/);
+  assert.deepEqual(activeSources(), ['opendota']);
+});
+
