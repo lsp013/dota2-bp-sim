@@ -19,8 +19,11 @@
  *    instead of the data silently vanishing. Pruning at 200 games would delete
  *    ~96% of pairs (measured) and make the tool useless.
  *
- * 3. Every pair carries a Wilson lower bound. The UI ranks on that, which is
- *    what stops 2-game flukes from topping the recommendation list.
+ * 3. Only the OBSERVED counts are stored per pair ({ g, w }). The win rate, the
+ *    Wilson interval and the confidence tier are pure functions of those two
+ *    numbers and are recomputed in the browser on load (src/dataset.mjs).
+ *    Storing them cost ~70% of the file size; the counts are untouched, so
+ *    nothing is lost.
  */
 
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -35,7 +38,6 @@ import {
   fetchPatchList,
   mapPool,
 } from './lib/opendota.mjs';
-import { wilson, tierFor } from '../src/wilson.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -58,11 +60,6 @@ async function syncLib() {
     // Non-fatal: the site still works if lib/ was already synced.
     console.warn(`      sync-lib warning: ${err.message}`);
   }
-}
-
-function round(n, dp = 4) {
-  const f = 10 ** dp;
-  return Math.round(n * f) / f;
 }
 
 async function main() {
@@ -115,15 +112,10 @@ async function main() {
       if (!oppId || !byId.has(oppId)) continue;
       if (games < MIN_GAMES_KEPT) continue;
 
-      const w = wilson(wins, games);
-      out[oppId] = {
-        g: games,
-        w: wins,
-        p: round(w.point),
-        lb: round(w.lower),
-        ub: round(w.upper),
-        t: tierFor(games),
-      };
+      // Slim format: store only the observed counts. p/lb/ub/t are derived and
+      // recomputed on load (src/dataset.mjs) — keeping them here cost ~70% of
+      // the file size for a memoised calculation.
+      out[oppId] = { g: games, w: wins };
       pairCount++;
       sampleSizes.push(games);
       if (games >= 30) rankedPairCount++;
@@ -165,11 +157,10 @@ async function main() {
       thresholds: { high: 100, medium: 30 },
       note:
         'OpenDota /matchups is already a rolling recent window, so per-pair ' +
-        'samples are small by nature (median ~47 games). t/lb/ub are a Wilson ' +
-        'interval, kept for judging trustworthiness. Scoring shrinks the ' +
-        'observed rate toward 50% (PRIOR_GAMES in src/recommend.mjs) instead of ' +
-        'using lb, because a worst-case bound destroyed real signal from ' +
-        'thin-but-genuine samples.',
+        'samples are small by nature (median ~47 games). Pairs store only the ' +
+        'observed counts { g, w }; win rate, Wilson interval and tier are ' +
+        'recomputed on load (src/dataset.mjs). Scoring shrinks the observed rate ' +
+        'toward 50% (PRIOR_GAMES in src/recommend.mjs).',
     },
     heroes: heroes.map((h) => ({
       id: h.id,

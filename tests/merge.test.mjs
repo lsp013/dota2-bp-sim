@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeDatasets } from '../src/merge.mjs';
+import { hydrateDataset } from '../src/dataset.mjs';
 
 /** Dataset with one hero (1) and the given opponent rows. */
 function ds(matchups, source = 'X') {
@@ -15,10 +16,10 @@ test('pairs present in both sources have their counts pooled', () => {
   // 60/100 and 100/200 -> 160/300
   const a = ds({ 1: { 2: { g: 100, w: 60, p: 0.6, lb: 0.5, ub: 0.69, t: 'high' } } }, 'A');
   const b = ds({ 1: { 2: { g: 200, w: 100, p: 0.5, lb: 0.43, ub: 0.57, t: 'high' } } }, 'B');
-  const m = mergeDatasets(a, b);
+  const m = hydrateDataset(mergeDatasets(a, b));
   assert.equal(m.matchups[1][2].g, 300);
   assert.equal(m.matchups[1][2].w, 160);
-  // rates are stored rounded to 4 decimals, hence the tolerance
+  // rates are derived on load and stored rounded to 4 decimals
   assert.ok(
     Math.abs(m.matchups[1][2].p - 160 / 300) < 1e-4,
     `rate re-derived from pooled counts, got ${m.matchups[1][2].p}`
@@ -48,7 +49,7 @@ test('a much larger source dominates the merged rate', () => {
   // OpenDota-style 40 games at 65% vs STRATZ-style 4000 games at 50%
   const small = ds({ 1: { 2: { g: 40, w: 26, p: 0.65, lb: 0.49, ub: 0.78, t: 'medium' } } }, 'small');
   const big = ds({ 1: { 2: { g: 4000, w: 2000, p: 0.5, lb: 0.485, ub: 0.515, t: 'high' } } }, 'big');
-  const m = mergeDatasets(small, big);
+  const m = hydrateDataset(mergeDatasets(small, big));
   // 2026/4040, compared with the 4-decimal storage rounding in mind
   assert.ok(
     Math.abs(m.matchups[1][2].p - 2026 / 4040) < 1e-4,
@@ -59,14 +60,14 @@ test('a much larger source dominates the merged rate', () => {
 
 test('wins are clamped so the rate can never exceed 1', () => {
   const a = ds({ 1: { 2: { g: 10, w: 12, p: 1, lb: 1, ub: 1, t: 'low' } } }, 'A'); // corrupt
-  const m = mergeDatasets(a, null);
+  const m = hydrateDataset(mergeDatasets(a, null));
   assert.ok(m.matchups[1][2].p <= 1);
 });
 
 test('tiers are recomputed from the pooled sample size', () => {
   const a = ds({ 1: { 2: { g: 20, w: 12, p: 0.6, lb: 0.39, ub: 0.78, t: 'low' } } }, 'A');
   const b = ds({ 1: { 2: { g: 200, w: 110, p: 0.55, lb: 0.48, ub: 0.62, t: 'high' } } }, 'B');
-  const m = mergeDatasets(a, b);
+  const m = hydrateDataset(mergeDatasets(a, b));
   assert.equal(m.matchups[1][2].g, 220);
   assert.equal(m.matchups[1][2].t, 'high', '20+200 games is now high confidence');
 });

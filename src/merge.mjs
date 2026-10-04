@@ -2,12 +2,13 @@
  * Dataset merging — powers the "OpenDota + STRATZ" mode.
  *
  * A dataset is `{ meta, heroes, matchups }` where
- * `matchups[heroId][foeId] = { g, w, p, lb, ub, t }`.
+ * `matchups[heroId][foeId] = { g, w }` — the observed games and wins. The
+ * derived fields (win rate, Wilson interval, tier) are filled in later by
+ * `hydrateDataset()`; see src/dataset.mjs for why they are not stored.
  *
- * Merging pools the raw counts per pair and re-derives the interval, rather
- * than averaging percentages. That is the statistically meaningful operation:
- * two samples of the same matchup, however differently sized, combine by adding
- * games and wins.
+ * Merging pools the raw counts per pair rather than averaging percentages. That
+ * is the statistically meaningful operation: two samples of the same matchup,
+ * however differently sized, combine by adding games and wins.
  *
  * Caveat worth keeping in mind (and surfaced in the UI): the two sources are
  * not drawn from identical populations — OpenDota is a rolling recent window
@@ -17,9 +18,6 @@
  * mainly fills pairs that one source happens to miss.
  */
 
-import { wilson, tierFor } from './wilson.mjs';
-
-const round = (n, dp = 4) => Math.round(n * 10 ** dp) / 10 ** dp;
 
 /**
  * Combine two datasets.
@@ -69,15 +67,8 @@ export function mergeDatasets(a, b, opts = {}) {
       if (g <= 0) continue;
       if (w > g) w = g; // guard against upstream inconsistency
 
-      const iv = wilson(w, g);
-      row[foeId] = {
-        g,
-        w,
-        p: round(iv.point),
-        lb: round(iv.lower),
-        ub: round(iv.upper),
-        t: tierFor(g),
-      };
+      // Slim rows: hydrateDataset() derives p/lb/ub/t once, after loading.
+      row[foeId] = { g, w };
       pairs++;
       sampleSizes.push(g);
     }
@@ -111,7 +102,8 @@ export function mergeDatasets(a, b, opts = {}) {
       'Merged by pooling raw games/wins per matchup, so larger samples dominate. ' +
       'The two sources cover different populations (OpenDota: rolling recent, all ' +
       'ranks; STRATZ: one week, calibrated brackets), so treat this as "all ' +
-      'evidence available" rather than one clean estimate.',
+      'evidence available" rather than one clean estimate. ' +
+      'derived fields (p/lb/ub/t) are computed on load by hydrateDataset().',
   };
 
   return { meta, heroes, matchups };

@@ -282,6 +282,15 @@ for (const a of HEROES) {
   }
 }
 
+// The real on-disk format is slim: only the observed counts. Serve the OpenDota
+// fixture that way so app.js's hydration path is what gets exercised.
+const MATCHUPS_SLIM = Object.fromEntries(
+  Object.entries(MATCHUPS).map(([h, row]) => [
+    h,
+    Object.fromEntries(Object.entries(row).map(([f, v]) => [f, { g: v.g, w: v.w }])),
+  ])
+);
+
 const DATASET = {
   meta: {
     builtAt: new Date().toISOString(), source: 'test', patch: '7.41', patchDate: null,
@@ -292,13 +301,15 @@ const DATASET = {
   },
   heroes: HEROES,
   patches: [],
-  matchups: MATCHUPS,
+  matchups: MATCHUPS_SLIM,
 };
 
 globalThis.document = documentStub;
 globalThis.window = windowStub;
 
 // Serve different content per URL so source switching is actually exercised.
+// This one keeps the OLD fat shape (derived fields included) on purpose, to
+// prove hydration tolerates legacy files as well as slim ones.
 const STRATZ_DATASET = {
   ...DATASET,
   meta: { ...DATASET.meta, source: 'STRATZ', sampleStats: { p25: 500, median: 2000, p75: 4000, p90: 8000, max: 20000 } },

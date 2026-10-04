@@ -12,6 +12,7 @@ import {
 } from './lib/recommend.mjs';
 import { addHero, removeHero, usedHeroes, resolveDrop } from './lib/draft.mjs';
 import { mergeDatasets } from './lib/merge.mjs';
+import { hydrateDataset } from './lib/dataset.mjs';
 
 const CDN = 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes';
 
@@ -84,7 +85,8 @@ async function loadSource(source) {
     // STRATZ is optional: if it was never deployed the merge degrades to
     // plain OpenDota rather than failing.
     const extra = await loadSource('stratz').catch(() => null);
-    const merged = mergeDatasets(base, extra, { label: 'OpenDota+STRATZ' });
+    // mergeDatasets returns slim rows, so hydrate once at the end.
+    const merged = hydrateDataset(mergeDatasets(base, extra, { label: 'OpenDota+STRATZ' }));
     state.datasets.both = merged;
     return merged;
   }
@@ -96,8 +98,9 @@ async function loadSource(source) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const ds = await res.json();
   if (!ds?.matchups || !ds?.heroes) throw new Error('数据文件格式不对');
-  state.datasets[source] = ds;
-  return ds;
+  // Files store only the observed counts; derive win rate, interval and tier.
+  state.datasets[source] = hydrateDataset(ds);
+  return state.datasets[source];
 }
 
 async function setSource(source) {

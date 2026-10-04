@@ -30,8 +30,6 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { wilson, tierFor } from '../src/wilson.mjs';
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
@@ -39,8 +37,6 @@ function arg(flag, fallback) {
   const i = process.argv.indexOf(flag);
   return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
-
-const round = (n, dp = 4) => Math.round(n * 10 ** dp) / 10 ** dp;
 
 async function main() {
   const inPath = resolve(ROOT, arg('--in', 'tmp/stratz-matrix.json'));
@@ -79,15 +75,9 @@ async function main() {
       if (!Number.isFinite(games) || games <= 0) { dropped++; continue; }
       const w = Math.min(Number.isFinite(wins) ? wins : 0, games);
 
-      const iv = wilson(w, games);
-      row[foeId] = {
-        g: games,
-        w,
-        p: round(iv.point),
-        lb: round(iv.lower),
-        ub: round(iv.upper),
-        t: tierFor(games),
-      };
+      // Slim format: only the observed counts. p/lb/ub/t are derived on load
+      // (src/dataset.mjs), which cut this file from 1.09 MB to ~0.3 MB.
+      row[foeId] = { g: games, w };
       pairs++;
       sampleSizes.push(games);
       if (games >= 30) rankedPairs++;
