@@ -36,7 +36,18 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const ENDPOINT = 'https://api.stratz.com/graphql';
-const OUT = resolve(ROOT, 'tmp/stratz-probe.json');
+
+/**
+ * Where to write the report.
+ * Defaults to tmp/ (gitignored) for local runs. CI passes --out so the dump
+ * lands somewhere it can be committed and read back.
+ */
+function resolveOut() {
+  const i = process.argv.indexOf('--out');
+  return i > -1 && process.argv[i + 1]
+    ? resolve(ROOT, process.argv[i + 1])
+    : resolve(ROOT, 'tmp/stratz-probe.json');
+}
 
 /* ------------------------------------------------------------------ */
 /* token                                                               */
@@ -159,6 +170,7 @@ async function main() {
   }
 
   const report = { probedAt: new Date().toISOString() };
+  const OUT = resolveOut();
 
   /* --- step 1: prove the token works with a query STRATZ documents --- */
   console.log('\n[1/4] 验证 token …');

@@ -1,0 +1,77 @@
+name: STRATZ probe (manual)
+
+# Isolated experiment — does a GitHub-hosted runner get past Cloudflare?
+#
+# api.stratz.com sits behind Cloudflare bot protection. Plain HTTP clients get
+# a "Just a moment..." challenge instead of data. Verified so far from a local
+# dev machine and from the agent sandbox; both blocked. GitHub runners are
+# datacenter IPs using the same plain HTTP client, so they are likely blocked
+# too — this workflow exists to find out rather than assume.
+#
+# If it succeeds, the STRATZ pipeline can run entirely in CI (zero local
+# maintenance). If it fails with the Cloudflare message, the only workable
+# route is a real browser — see scripts/stratz-browser-snippet.js.
+#
+# SETUP: add a repository secret named STRATZ_TOKEN
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+# Then run this workflow from the Actions tab.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check the secret is present
+        env:
+          STRATZ_TOKEN: ${{ secrets.STRATZ_TOKEN }}
+        run: |
+          if [ -z "$STRATZ_TOKEN" ]; then
+            echo "::error::STRATZ_TOKEN secret is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "secret present, length ${#STRATZ_TOKEN}"
+
+      - name: Probe STRATZ
+        env:
+          STRATZ_TOKEN: ${{ secrets.STRATZ_TOKEN }}
+        # Exits non-zero on failure, and prints a plain-language reason
+        # distinguishing "bad token" from "Cloudflare challenge".
+        run: node scripts/stratz-probe.mjs --out data/stratz/probe.json
+
+      - name: Show what we got
+        if: always()
+        run: |
+          if [ -f data/stratz/probe.json ]; then
+            echo "probe file written ($(wc -c < data/stratz/probe.json) bytes)"
+            node -e "
+              const r = require('./data/stratz/probe.json');
+              console.log('root fields:', (r.rootFields||[]).map(f=>f.name).join(', '));
+              console.log('types:', (r.types||[]).length);
+            " || true
+          else
+            echo "no probe file — the probe failed, see the step above"
+          fi
+
+      - name: Commit the dump
+        if: success()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/stratz
+          if git diff --staged --quiet; then
+            echo "no change"
+          else
+            git commit -m "chore(stratz): probe output [skip ci]"
+            git push
+          fi
