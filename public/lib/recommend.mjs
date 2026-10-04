@@ -11,22 +11,29 @@
  * Our model is deliberately simple and explainable — every number the UI shows
  * traces back to an observed matchup sample:
  *
- *   counterScore(h) = mean over enemies e of  lb(h vs e)      // can we fight them?
- *   synergyScore(h) = mean over allies  a of  lb(h vs a)      // do we fit together?
- *   baseScore(h)    = lb of h's overall win rate
+ *   counterScore(h) = mean over enemies e of  shrunk(h vs e)   // can we fight them?
+ *   synergyScore(h) = mean over allies  a of  shrunk(h vs a)   // do we fit together?
+ *   baseScore(h)    = shrunk(h's overall win rate)
  *
  *   total = wCounter*counter + wSynergy*synergy + wBase*base
  *
- * Everything uses the Wilson LOWER bound, so thin evidence is automatically
- * discounted rather than needing ad-hoc penalties.
+ * SCORING vs FILTERING — an important distinction we got wrong at first:
  *
- * A caveat we surface in the UI rather than hide: `lb(h vs a)` is measured from
- * games where h and a were on OPPOSITE teams. Using it as a synergy signal is a
- * heuristic — teams that pick well tend to pick heroes that are strong against
- * each other's weaknesses. We label it "synergy" but the tooltip is honest that
- * it is a co-occurrence proxy, not a measured same-team win rate. OpenDota's
- * public endpoints do not expose same-team pair win rates, so a true synergy
- * term would need parsed replay data.
+ * The Wilson LOWER bound is a worst-case estimate. It is the right tool for
+ * deciding whether a sample is trustworthy (see wilson.mjs tiers), but it is
+ * the WRONG thing to use as a score. Real example from this dataset:
+ *
+ *   Ancient Apparition vs Necrophos: 22 wins / 35 games = 62.9%
+ *   Wilson lower bound of that pair: 0.465  -> "worse than a coin flip"
+ *
+ * Scoring by the lower bound therefore ranked Ancient Apparition — the 5th
+ * strongest counter to Necrophos in the whole dataset — at #16 of 88, with a
+ * counter score of 44%. The genuine signal was destroyed by a worst-case bound.
+ *
+ * We now score with a SHRINKAGE estimate instead: the observed rate pulled
+ * toward 50% by a prior worth PRIOR_GAMES pseudo-games. That keeps the useful
+ * property (a 2-game fluke cannot top the list) without throwing away real
+ * evidence from a 35-game sample.
  */
 
 import { isRankable } from './wilson.mjs';
@@ -39,6 +46,38 @@ export const DEFAULT_WEIGHTS = {
 
 /** Minimum games before a matchup pair may influence a score. */
 export const MIN_PAIR_GAMES = 30;
+
+/**
+ * Strength of the shrinkage prior, in pseudo-games.
+ *
+ * A pair observed over n games keeps roughly n/(n+PRIOR_GAMES) of its distance
+ * from 50%. So at n=25 half the edge is retained, at n=100 four fifths.
+ *
+ * Calibrated deliberately light, because MIN_PAIR_GAMES already excludes
+ * everything under 30 games from scoring — the floor is what actually guards
+ * against 2-game flukes, so the prior does not need to repeat that job. An
+ * earlier value of 60 double-penalised thin samples: it flattened a genuine
+ * 62.9% over 35 games (Ancient Apparition vs Necrophos) down to 0.547 while a
+ * 60.5% over 119 games kept most of its edge, which pushed the stronger
+ * counter-pick out of the visible list for no good reason.
+ */
+export const PRIOR_GAMES = 25;
+
+/** Prior mean — 50%, i.e. "an unmeasured matchup is a coin flip". */
+export const PRIOR_P = 0.5;
+
+/**
+ * Shrink an observed win rate toward the prior.
+ * @param {number} wins
+ * @param {number} games
+ */
+export function shrink(wins, games, k = PRIOR_GAMES, prior = PRIOR_P) {
+  if (!Number.isFinite(wins) || !Number.isFinite(games) || games <= 0) {
+    return prior;
+  }
+  const w = Math.min(wins, games);
+  return (w + prior * k) / (games + k);
+}
 
 /**
  * Read a matchup row for (attacker vs defender), trying both directions.
@@ -67,6 +106,10 @@ export function lookupPair(matchups, aId, bId) {
 /**
  * Overall strength of a hero = win rate across all its matchups, pooled.
  * Pooling raw counts (rather than averaging rates) weights by evidence.
+ *
+ * `shrunk` is what scoring uses; `p` is the raw pooled rate for display. For a
+ * hero with thousands of games the two are nearly identical, so this only
+ * matters for heroes with very little data.
  */
 export function heroBase(matchups, heroId) {
   const row = matchups?.[heroId];
@@ -78,31 +121,44 @@ export function heroBase(matchups, heroId) {
     wins += v.w;
   }
   if (games === 0) return null;
-  // Re-derive the interval from pooled counts.
   const p = wins / games;
-  return { games, wins, p, lb: p, ub: p, pooled: true };
+  return { games, wins, p, shrunk: shrink(wins, games), pooled: true };
 }
 
 /**
- * Average Wilson lower bound of `heroId` against a set of opponent ids.
- * Returns { value, samples, covered } — `covered` is how many opponents had
- * usable data, so the UI can say "based on 3 of 5 enemies".
+ * How well `heroId` fares against a set of opponent ids.
+ *
+ * Counts are POOLED across the opponents and then shrunk once, rather than
+ * averaging per-pair rates: pooling keeps the evidence weighting implicit and
+ * correct (a 200-game pair outweighs a 40-game one automatically).
+ *
+ * Returns { value, raw, samples, wins, covered, total } — `covered` is how many
+ * opponents had usable data, so the UI can say "based on 3 of 5 enemies".
  */
 export function vsSet(matchups, heroId, ids, minGames = MIN_PAIR_GAMES) {
-  if (!ids.length) return { value: null, samples: 0, covered: 0, total: 0 };
-  let sum = 0;
+  if (!ids.length) {
+    return { value: null, raw: null, samples: 0, wins: 0, covered: 0, total: 0 };
+  }
+  let wins = 0;
+  let games = 0;
   let used = 0;
-  let samples = 0;
   for (const id of ids) {
     const row = lookupPair(matchups, heroId, id);
     if (!row || !isRankable(row.g) || row.g < minGames) continue;
-    sum += row.lb;
-    samples += row.g;
+    wins += row.w;
+    games += row.g;
     used++;
   }
+  if (!used) {
+    return { value: null, raw: null, samples: 0, wins: 0, covered: 0, total: ids.length };
+  }
   return {
-    value: used ? sum / used : null,
-    samples,
+    // Shrinkage estimate — this is what the ranking uses.
+    value: shrink(wins, games),
+    // Unshrunk pooled rate, kept for display and debugging.
+    raw: games ? wins / games : null,
+    samples: games,
+    wins,
     covered: used,
     total: ids.length,
   };
@@ -181,9 +237,9 @@ export function recommend(dataset, opts = {}) {
       acc += weights.synergy * synergy.value;
       wUsed += weights.synergy;
     }
-    if (base.lb !== null) {
-      parts.base = base.lb;
-      acc += weights.base * base.lb;
+    if (base.shrunk !== null && base.shrunk !== undefined) {
+      parts.base = base.shrunk;
+      acc += weights.base * base.shrunk;
       wUsed += weights.base;
     }
 

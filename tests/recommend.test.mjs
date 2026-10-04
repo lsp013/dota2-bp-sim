@@ -5,8 +5,10 @@ import {
   heroBase,
   vsSet,
   recommend,
+  shrink,
   DEFAULT_WEIGHTS,
   MIN_PAIR_GAMES,
+  PRIOR_GAMES,
 } from '../src/recommend.mjs';
 
 /** Minimal synthetic dataset: 3 heroes, hand-set matchups. */
@@ -51,12 +53,56 @@ test('lookupPair returns null for unknown pairs', () => {
   assert.equal(lookupPair(undefined, 1, 2), null);
 });
 
-test('vsSet averages only over opponents with enough games', () => {
+test('vsSet pools only the opponents with enough games', () => {
   const ds = fixture();
   const res = vsSet(ds.matchups, 1, [2, 3]);
   assert.equal(res.total, 2);
   assert.equal(res.covered, 1, 'hero 3 has no data');
-  assert.ok(Math.abs(res.value - 0.5) < 1e-9, 'uses the lb of the one usable pair');
+  // Pair is 60/100; pooled raw is 0.6 and the shrunk estimate pulls toward 0.5.
+  assert.ok(Math.abs(res.raw - 0.6) < 1e-9, 'raw pooled rate');
+  assert.ok(res.value < 0.6 && res.value > 0.5, `shrunk toward 0.5, got ${res.value}`);
+});
+
+/* ---------------- shrinkage: the scoring fix ---------------- */
+
+test('REGRESSION: a strong counter on a small sample is NOT scored below 50%', () => {
+  // Real case that motivated the change: Ancient Apparition vs Necrophos is
+  // 22 wins / 35 games = 62.9%, the 5th strongest counter in the dataset.
+  // Scoring by the Wilson LOWER bound gave 0.465 — i.e. "worse than average" —
+  // which ranked it #16 of 88 against a Necrophos draft. Shrinkage fixes that.
+  const p = { g: 35, w: 22, p: 22 / 35, lb: 0.465, ub: 0.78, t: 'medium' };
+  const v = vsSet({ 1: { 2: p } }, 1, [2], MIN_PAIR_GAMES);
+  assert.ok(v.value > 0.5, `must stay above a coin flip, got ${v.value}`);
+  assert.ok(v.value > p.lb, 'shrinkage is more optimistic than the lower bound');
+});
+
+test('shrink pulls small samples toward the prior, large samples stay put', () => {
+  assert.equal(shrink(0, 0), 0.5, 'no data -> prior');
+  assert.ok(shrink(2, 2) < 0.6, 'a 2-game sweep is heavily damped');
+  assert.ok(shrink(22, 35) > 0.5, 'a real 35-game signal survives');
+  // At 100x the prior, the estimate is essentially the observed rate.
+  assert.ok(Math.abs(shrink(6000, 10000) - 0.6) < 0.01);
+});
+
+test('shrink keeps roughly n/(n+k) of the distance from 50%', () => {
+  const k = PRIOR_GAMES;
+  const n = 180;
+  const observed = 0.7;
+  const expected = 0.5 + (observed - 0.5) * (n / (n + k));
+  const actual = shrink(observed * n, n);
+  assert.ok(Math.abs(actual - expected) < 1e-9);
+});
+
+test('a fluke sweep cannot outrank a well-measured good counter', () => {
+  // 2/2 = "100%" must not beat 65% over 200 games.
+  assert.ok(shrink(2, 2) < shrink(130, 200));
+});
+
+test('shrink never returns a value outside [0,1]', () => {
+  for (const [w, g] of [[0, 1], [1, 1], [0, 500], [500, 500], [150, 100]]) {
+    const v = shrink(w, g);
+    assert.ok(v >= 0 && v <= 1, `shrink(${w},${g}) = ${v}`);
+  }
 });
 
 test('vsSet respects a raised minGames threshold', () => {
@@ -78,6 +124,7 @@ test('heroBase pools raw counts across all matchups', () => {
   assert.equal(b.games, 100);
   assert.equal(b.wins, 60);
   assert.ok(Math.abs(b.p - 0.6) < 1e-9);
+  assert.ok(b.shrunk > 0.5 && b.shrunk < 0.6, 'base is shrunk too');
 });
 
 test('recommend excludes heroes already picked or banned', () => {

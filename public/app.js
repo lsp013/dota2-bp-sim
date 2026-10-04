@@ -226,8 +226,17 @@ function renderRecs() {
     if (r.counter.value !== null) {
       bits.push(`克制 ${pct(r.counter.value)} (${r.counter.covered}/${r.counter.total} 敌)`);
     }
-    if (r.synergy.value !== null) {
-      bits.push(`协同 ${pct(r.synergy.value)}`);
+    // Show the single strongest enemy matchup explicitly. The pooled counter
+    // figure above is shrunk toward 50%, so a hero with a genuinely lopsided
+    // matchup (e.g. Ancient Apparition at 62.9% over 35 games vs Necrophos)
+    // can look mediocre there. Naming the number keeps that signal visible
+    // even when the hero's overall win rate drags its rank down.
+    const best = (r.threats ?? [])
+      .filter((t) => t.g >= state.minGames)
+      .sort((a, b) => b.p - a.p)[0];
+    if (best) {
+      const foe = heroById(best.heroId);
+      if (foe) bits.push(`最克 ${foe.n} ${pct(best.p)} (${best.g} 场)`);
     }
     if (r.base) bits.push(`版本 ${pct(r.base.p)}`);
     if (r.coverage !== undefined && r.coverage < 1 && r.counter.total > 0) {
@@ -649,12 +658,13 @@ function openDetail(heroId) {
     ${tbl(vsAlly, '与队友的对位记录')}
 
     <div class="note">
-      「胜率」为观测到的对位胜率，「场次」是样本量。本工具按
-      <b>威尔逊 95% 置信下界</b>排序，因此少样本的高胜率不会排到前面。
-      样本 &lt; 30 场的组合不参与排序。<br><br>
+      「胜率」为观测到的对位胜率，「场次」是样本量。排序用的是
+      <b>向 50% 收缩后的估计值</b>：样本越少，估计值被拉得越靠近 50%，
+      所以少样本的高胜率不会直接霸榜；样本 &lt; 30 场的组合完全不参与排序。<br><br>
       <b>重要局限</b>：OpenDota 的对位数据不区分分路，因此「敌法 vs 美杜莎」
       这类样本大多来自两人并未同路对线的对局，反映的是
-      <i>选了该英雄的队伍是否获胜</i>，而非严格的对线克制关系。请结合自己的判断使用。
+      <i>选了该英雄的队伍是否获胜</i>，而非严格的对线克制关系。
+      另外对位样本普遍很小（本数据集单对位中位数约 47 场），请结合自己的判断使用。
     </div>
   `;
 

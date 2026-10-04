@@ -507,6 +507,28 @@ test('the hero pool renders every hero and marks used ones', async () => {
   );
 });
 
+test('recommendation cards name the strongest enemy matchup', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1); // hero 1 becomes the enemy team
+  clickToggle('our');
+
+  const card = q('recs').children[0];
+  assert.ok(card, 'a recommendation card is rendered');
+
+  const main = card.children.find((c) => c._classes.has('rec-main'));
+  const sub = main?.children.find((c) => c._classes.has('rec-sub'));
+  assert.ok(sub, 'card has a subtitle');
+
+  // The pooled counter figure is shrunk toward 50%, so the card must spell out
+  // the single strongest matchup or that signal is invisible.
+  assert.match(
+    sub.textContent,
+    /最克/,
+    `subtitle should name the strongest counter, got: "${sub.textContent}"`
+  );
+});
+
 test('REGRESSION: dragging works when `navigator` does not exist (Node 20 / CI)', async () => {
   // CI runs Node 20, which has NO global `navigator`. app.js touched
   // `navigator.vibrate` during drag start, so the whole build failed at the

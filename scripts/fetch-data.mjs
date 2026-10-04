@@ -164,8 +164,12 @@ async function main() {
       },
       thresholds: { high: 100, medium: 30 },
       note:
-        'OpenDota /matchups is already a rolling recent window; sample sizes are ' +
-        'small by nature. Rank by wilson lower bound (lb), not raw win rate (p).',
+        'OpenDota /matchups is already a rolling recent window, so per-pair ' +
+        'samples are small by nature (median ~47 games). t/lb/ub are a Wilson ' +
+        'interval, kept for judging trustworthiness. Scoring shrinks the ' +
+        'observed rate toward 50% (PRIOR_GAMES in src/recommend.mjs) instead of ' +
+        'using lb, because a worst-case bound destroyed real signal from ' +
+        'thin-but-genuine samples.',
     },
     heroes: heroes.map((h) => ({
       id: h.id,
