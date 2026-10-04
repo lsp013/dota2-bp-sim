@@ -4,3 +4,9 @@ node_modules/
 tmp/
 .cache/
 .pnpm-store/
+
+# Secrets — never commit API tokens.
+# STRATZ token lives in .env.local (see scripts/fetch-stratz.mjs).
+.env
+.env.*
+!.env.example
