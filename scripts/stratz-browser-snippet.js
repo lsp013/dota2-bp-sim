@@ -1,38 +1,42 @@
 /**
- * STRATZ probe + matchup pull — BROWSER CONSOLE version (v2).
+ * STRATZ matchup pull — BROWSER CONSOLE version (v3).
  *
- * WHY A BROWSER IS REQUIRED
- * -------------------------
- * api.stratz.com is behind Cloudflare bot protection. Plain HTTP clients get a
- * "Just a moment..." challenge instead of data. Reproduced from a local dev
- * machine AND from the agent sandbox — including with TLS certificate
- * validation disabled, which rules out the sandbox's TLS interception as the
- * cause. The block is client-fingerprint based, so node/curl/python/CI runners
- * are all out. A real browser passes, because it can run the challenge.
+ * WHY A BROWSER
+ * -------------
+ * api.stratz.com is behind Cloudflare bot protection; plain HTTP clients get a
+ * "Just a moment..." page. Verified from a local machine and from the agent
+ * sandbox, including with TLS validation disabled — so it is fingerprint-based,
+ * not certificate-based. Only a real browser passes.
  *
- * WHY THIS IS v2
- * --------------
- * The v1 probe found the schema entry points but not their arguments or field
- * names, and STRATZ's docs warn that field names must match exactly. So this
- * version is self-adapting: it introspects the arguments and fields first, then
- * builds the data query from what actually exists instead of guessing.
+ * SCHEMA (discovered in probes v1/v2, so nothing here is guessed)
+ * ---------------------------------------------------------------
+ *   heroStats {
+ *     heroVsHeroMatchup(
+ *       heroId, week,            // week = epoch timestamp of ONE week; null = current
+ *       bracketBasicIds,          // ALL | DIVINE_IMMORTAL | LEGEND_ANCIENT | ...
+ *       matchLimit, skip, take
+ *     ) {
+ *       advantage    { heroId matchCountVs vs { ... } }
+ *       disadvantage { heroId matchCountVs vs { ... } }
+ *     }
+ *   }
+ *   vs is a HeroStatsHeroDryadType carrying:
+ *     heroId1 heroId2 matchCount winCount winRateHeroId1 winRateHeroId2 week bracketBasicIds
  *
- * What we are looking for (the only things that would justify using STRATZ):
- *   - bracketBasicIds -> per-rank-bracket filtering. OpenDota has NONE, which
- *     is why "is Muerta the top Necrophos counter?" cannot be answered today.
- *   - matchCount      -> sample size per matchup pair. OpenDota's median is
- *     only ~47 games, which is the whole reason counters like Ancient
- *     Apparition (35 games) are hard to distinguish from noise.
+ * WHAT THIS ANSWERS
+ * -----------------
+ * 1. How large are STRATZ's per-pair samples versus OpenDota's ~47-game median?
+ *    (If they are not clearly bigger, STRATZ is not worth the Cloudflare fight.)
+ * 2. Does DIVINE_IMMORTAL bracket show Muerta as the top Necrophos counter?
+ *    OpenDota cannot answer this at all — it has no bracket filter.
  *
  * HOW TO USE
  * ----------
- * 1. Open  https://api.stratz.com/graphiql  in your browser; wait for it to load.
- *    (Must be that origin so the request is same-origin and carries
- *    Cloudflare's clearance cookie.)
+ * 1. Open https://api.stratz.com/graphiql in your browser and let it load.
  * 2. F12 -> Console.
  * 3. Paste everything between the ---8<--- markers, replace
  *    PASTE_YOUR_TOKEN_HERE, press Enter.
- * 4. It downloads stratz-probe2.json -> move to F:\code\dsh\dota_BP\tmp\
+ * 4. It downloads stratz-matchups.json -> move to F:\code\dsh\dota_BP\tmp\
  *
  * The token is a placeholder here on purpose: this file is committed.
  */
@@ -41,96 +45,149 @@
 
 (async () => {
   const TOKEN = 'PASTE_YOUR_TOKEN_HERE';
-  const HERO_ID = 36; // Necrophos — the case we are trying to resolve
+  const HERO = 36; // Necrophos
 
-  const q = (query, variables) => fetch('/graphql', {
+  const NAMES = { 5:'Crystal Maiden', 21:'Windranger', 36:'Necrophos', 60:'Night Stalker',
+                  68:'Ancient Apparition', 69:'Doom', 79:'Shadow Demon', 101:'Skywrath Mage',
+                  123:'Hoodwink', 138:'Muerta' };
+
+  const q = (query) => fetch('/graphql', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
-    body: JSON.stringify(variables ? { query, variables } : { query }),
+    body: JSON.stringify({ query }),
   }).then((r) => r.json());
 
-  const out = { probedAt: new Date().toISOString(), via: 'browser console v2' };
+  const out = { pulledAt: new Date().toISOString(), via: 'browser console v3', heroId: HERO };
 
-  // ---- 1. sanity: does the token work at all? ----
-  const smoke = await q('query { constants { gameModes { id name } } }');
+  // ---- auth ----
+  const smoke = await q('query { constants { gameModes { id } } }');
   if (smoke.errors) { console.error('认证失败：', smoke.errors); return; }
-  console.log('✔ token 可用');
+  console.log('✔ token 可用\n');
 
-  // ---- 2. introspect HeroStatsQuery WITH arguments ----
-  const fmt = (t) => t?.name || t?.ofType?.name || t?.ofType?.ofType?.name || t?.kind;
-  const hsq = await q(`query { __type(name:"HeroStatsQuery"){ fields {
-      name description
-      args { name description type { name kind ofType { name kind } } }
-      type { name kind ofType { name } }
-    } } }`);
-  const hsqFields = hsq.data?.__type?.fields ?? [];
-  out.heroStatsQuery = hsqFields;
-  const hvh = hsqFields.find((f) => f.name === 'heroVsHeroMatchup');
-  console.log('heroVsHeroMatchup 参数:', (hvh?.args || []).map((a) => `${a.name}: ${fmt(a.type)}`).join(', ') || '(无)');
+  // ---- one matchup query for a given bracket ----
+  const FIELDS = 'heroId1 heroId2 matchCount winCount winRateHeroId1 winRateHeroId2 week bracketBasicIds';
+  const buildQuery = (extraArgs) => `{
+    heroStats {
+      heroVsHeroMatchup(heroId: ${HERO}, matchLimit: 0, take: 200${extraArgs}) {
+        advantage    { heroId matchCountVs vs { ${FIELDS} } }
+        disadvantage { heroId matchCountVs vs { ${FIELDS} } }
+      }
+    }
+  }`;
 
-  // ---- 3. introspect the two Dryad types + bracket enum ----
-  const dryad = async (name) => {
-    const d = await q(`query($n:String!){ __type(name:$n){ name fields { name type { name kind ofType { name } } } } }`, { n: name });
-    return d.data?.__type?.fields ?? [];
+  const rowsOf = (data) => {
+    const m = data?.heroStats?.heroVsHeroMatchup;
+    if (!m) return [];
+    // Normalise both lists into one shape.
+    //
+    // DIRECTION MATTERS: HeroStatsHeroDryadType is a PAIR record with
+    // heroId1/heroId2, and we do not know in advance which side Necrophos is.
+    // Guessing wrong inverts every win rate, so work it out from the ids and
+    // report the FOE's win rate against Necrophos.
+    const norm = (arr) => (arr || []).map((r) => {
+      const vs = r.vs || {};
+      const mineIs1 = vs.heroId1 === HERO;
+      const foeId = r.heroId ?? (mineIs1 ? vs.heroId2 : vs.heroId1);
+      const matchCount = vs.matchCount ?? 0;
+      // wins credited to heroId1; flip when Necrophos is heroId1
+      const foeWins = mineIs1 ? matchCount - (vs.winCount ?? 0) : (vs.winCount ?? 0);
+      let p = matchCount ? foeWins / matchCount : null;
+      // Prefer the API's own rate field when present and sane. Decimal scale is
+      // undocumented, so treat anything above 1.5 as a percentage.
+      const raw = mineIs1 ? vs.winRateHeroId2 : vs.winRateHeroId1;
+      if (raw != null) {
+        let v = Number(raw);
+        if (v > 1.5) v /= 100;
+        if (v >= 0 && v <= 1) p = v;
+      }
+      return { foeId, matchCount, foeWins, p, week: vs.week, bracket: vs.bracketBasicIds, heroId1: vs.heroId1, heroId2: vs.heroId2 };
+    });
+    return [...norm(m.advantage), ...norm(m.disadvantage)];
   };
-  out.heroDryadType = await dryad('HeroDryadType');
-  out.heroStatsHeroDryadType = await dryad('HeroStatsHeroDryadType');
-  console.log('HeroDryadType 字段:', out.heroDryadType.map((f) => f.name).join(', '));
 
-  const be = await q('query { __type(name:"RankBracketBasicEnum"){ enumValues { name description } } }');
-  out.brackets = be.data?.__type?.enumValues ?? [];
-  console.log('分段位枚举:', out.brackets.map((b) => b.name).join(', '));
+  const run = async (label, extraArgs) => {
+    const res = await q(buildQuery(extraArgs));
+    out[label] = res;
+    if (res.errors) { console.warn(`${label} ❌ ${res.errors.map((e) => e.message).join(' | ')}`); return null; }
+    const rows = rowsOf(res.data);
+    const counts = rows.map((r) => r.matchCount).filter((n) => n > 0).sort((a, b) => b - a);
+    const med = counts.length ? counts[Math.floor(counts.length / 2)] : 0;
+    console.log(`${label}: ${rows.length} 行 | 样本量 最大 ${counts[0] ?? 0} / 中位 ${med} / 最小 ${counts[counts.length - 1] ?? 0}`);
+    const sample = rows.find((r) => r.heroId1 != null);
+    if (sample) console.log(`  方向检查: heroId1=${sample.heroId1} heroId2=${sample.heroId2} → NEC 是 heroId${sample.heroId1 === HERO ? 1 : 2}`);
+    return rows;
+  };
 
-  // ---- 4. build the data query from what actually exists ----
-  const wanted = ['heroId1','heroId2','matchCount','winCount','winRateHeroId1','winRateHeroId2','synergy','bracketBasicIds','week'];
-  const available = new Set(out.heroDryadType.map((f) => f.name));
-  const sel = wanted.filter((w) => available.has(w));
-  console.log('将请求的字段:', sel.join(', '));
+  // ---- compare brackets, current week ----
+  console.log('=== 当前周 · 不同分段 ===');
+  const all    = await run('all',    ', bracketBasicIds: [ALL]');
+  const divine = await run('divine', ', bracketBasicIds: [DIVINE_IMMORTAL]');
+  const legend = await run('legend', ', bracketBasicIds: [LEGEND_ANCIENT]');
 
-  if (!sel.length) {
-    console.warn('HeroDryadType 里没有预期字段，跳过数据查询');
-  } else {
-    const selStr = sel.join(' ');
-    const tryQ = async (label, query) => {
-      const res = await q(query);
-      out[label] = res;
-      if (res.errors) { console.warn(label, '失败:', res.errors.map((e) => e.message).join(' | ')); return null; }
-      const rows = res.data?.heroStats?.heroVsHeroMatchup?.advantage?.length ?? 0;
-      console.log(`✔ ${label}: advantage ${rows} 行`);
-      return res.data;
+  const show = (rows, title) => {
+    if (!rows?.length) return;
+    console.log(`\n--- ${title}: 打 Necrophos 胜率最高的 10 个（≥30 场）---`);
+    rows.slice()
+      .filter((r) => r.matchCount >= 30 && r.p != null)
+      .sort((a, b) => b.p - a.p)
+      .slice(0, 10)
+      .forEach((r, i) => console.log(`  ${i + 1}. ${(NAMES[r.foeId] || ('#' + r.foeId)).padEnd(20)} ${(r.p * 100).toFixed(1)}%  ${r.matchCount} 场`));
+  };
+  show(all, 'ALL 分段');
+  show(divine, 'DIVINE_IMMORTAL 分段');
+
+  // ---- pointed check on the heroes in question ----
+  console.log('\n=== 点名英雄（当前周 · ALL）===');
+  for (const id of [68, 138, 69, 101, 79, 60, 5, 21]) {
+    const r = (all || []).find((x) => x.foeId === id);
+    if (!r || r.p == null) { console.log(`  ${(NAMES[id] || id).padEnd(20)} 无数据`); continue; }
+    console.log(`  ${(NAMES[id] || id).padEnd(20)} ${(r.p * 100).toFixed(1)}%  ${r.matchCount} 场`);
+  }
+
+  // ---- one week may be thin: walk back up to 8 weeks and sum ----
+  const wkSample = (all || []).find((r) => typeof r.week === 'number')?.week;
+  out.weekSample = wkSample;
+  console.log(`\n响应中的 week 值: ${wkSample} (${wkSample ? new Date(wkSample > 1e11 ? wkSample : wkSample * 1000).toISOString().slice(0,10) : 'n/a'})`);
+
+  if (typeof wkSample === 'number') {
+    const step = wkSample > 1e11 ? 604800000 : 604800; // ms or seconds
+    console.log('\n=== 往前翻 8 周，累加样本 ===');
+    out.weeks = {};
+    const totals = new Map();
+    const add = (rows) => {
+      for (const r of rows) {
+        if (!r.foeId || !r.matchCount) continue;
+        const cur = totals.get(r.foeId) || { matchCount: 0, foeWins: 0 };
+        cur.matchCount += r.matchCount;
+        cur.foeWins += r.foeWins ?? 0;
+        totals.set(r.foeId, cur);
+      }
     };
-
-    // minimal form first — most likely signature
-    await tryQ('necAll', `{ heroStats { heroVsHeroMatchup(heroId: ${HERO_ID}) {
-        advantage { ${selStr} } disadvantage { ${selStr} } } } }`);
-
-    // then try adding a bracket filter, if the argument exists and we know a value
-    const bracketArg = (hvh?.args || []).find((a) => /bracket/i.test(a.name));
-    const weekArg = (hvh?.args || []).find((a) => /week/i.test(a.name));
-    if (bracketArg && out.brackets.length) {
-      const vals = out.brackets.map((b) => b.name).filter((n) => !/UNKNOWN|INVALID/i.test(n));
-      const extra = [`${bracketArg.name}: [${vals.map((v) => `"${v}"`).join(', ')}]`];
-      if (weekArg) extra.push(`${weekArg.name}: 1`);
-      await tryQ('necBracketed', `{ heroStats { heroVsHeroMatchup(heroId: ${HERO_ID}, ${extra.join(', ')}) {
-          advantage { ${selStr} } disadvantage { ${selStr} } } } }`);
+    add(all || []);
+    for (let i = 1; i <= 8; i++) {
+      const wk = wkSample - i * step;
+      const res = await q(buildQuery(`, week: ${wk}, bracketBasicIds: [ALL]`));
+      if (res.errors) { console.warn(`  -${i}周 ❌ ${res.errors[0].message}`); out.weeks['m' + i] = res; break; }
+      out.weeks['m' + i] = res;
+      const rows = rowsOf(res.data);
+      add(rows);
+      console.log(`  -${i}周: ${rows.length} 行`);
     }
-
-    // how big are STRATZ's samples overall? (compare with OpenDota's ~47 median)
-    const wk = await q('query { heroStats { winWeek(week: 1) { heroId matchCount winCount } } }');
-    out.winWeek = wk;
-    if (wk.errors) console.warn('winWeek 失败:', wk.errors.map((e) => e.message).join(' | '));
-    else {
-      const mc = (wk.data?.heroStats?.winWeek ?? []).map((r) => r.matchCount).filter(Boolean).sort((a,b)=>a-b);
-      console.log('winWeek 英雄数:', mc.length, '| 单英雄周场次中位:', mc[Math.floor(mc.length/2)]);
-    }
+    out.aggregate = [...totals.entries()].map(([foeId, v]) => ({
+      foeId, matchCount: v.matchCount, foeWins: v.foeWins,
+      wr: v.matchCount ? v.foeWins / v.matchCount : null,
+    }));
+    console.log('\n=== 9 周累加后（样本量 / 打 NEC 胜率）===');
+    out.aggregate.slice().sort((a, b) => b.wr - a.wr).filter((r) => r.matchCount >= 30).slice(0, 12)
+      .forEach((r, i) => console.log(`  ${i + 1}. ${(NAMES[r.foeId] || ('#' + r.foeId)).padEnd(20)} ${(r.wr * 100).toFixed(1)}%  ${r.matchCount} 场`));
   }
 
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'stratz-probe2.json';
+  a.download = 'stratz-matchups.json';
   a.click();
-  console.log('✔ 已下载 stratz-probe2.json —— 移到 F:\\code\\dsh\\dota_BP\\tmp\\');
+  console.log('\n✔ 已下载 stratz-matchups.json —— 移到 F:\\code\\dsh\\dota_BP\\tmp\\');
 })();
 
 ---8<--- end of snippet ---8<--- */
