@@ -86,6 +86,13 @@ npm test          # 跑测试
 
 若你的环境限制了进程 spawn（某些沙箱），用 `npm run test:direct` 代替 `npm test`。
 
+> **注意 Node 版本**：CI 跑的是 **Node 20**，本地可能是更高版本。
+> 曾因此挂过一次构建：`app.js` 里有一句 `navigator.vibrate`，而 Node 20
+> **没有全局 `navigator`**，抛 `ReferenceError`；本地的 Node 24 有这个全局，
+> 所以本地全绿、CI 全红。
+> 改完代码请尽量用 Node 20 验证一次（`nvm use 20`），或保持对浏览器全局量的
+> `typeof` 防御写法。`tests/ui.test.mjs` 里有一条专门的回归测试覆盖这个坑。
+
 ---
 
 ## 部署到 GitHub Pages

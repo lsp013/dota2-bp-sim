@@ -494,7 +494,10 @@ function startDrag(x, y) {
   document.body.appendChild(g);
   DND.ghost = g;
   moveGhost(x, y);
-  if (navigator.vibrate) navigator.vibrate(8);
+  // `navigator` always exists in a browser, but not in every JS runtime: Node 20
+  // (which CI runs) has NO global navigator, and this file is imported by tests.
+  // An unguarded reference threw ReferenceError and broke the CI build.
+  if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(8);
 }
 
 function endDrag() {

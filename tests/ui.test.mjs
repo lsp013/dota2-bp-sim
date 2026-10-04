@@ -287,9 +287,16 @@ const DATASET = {
 
 globalThis.document = documentStub;
 globalThis.window = windowStub;
-// Node >=21 exposes a read-only global `navigator` without `vibrate`, and
-// app.js guards that call, so no stub is needed.
 globalThis.fetch = async () => ({ ok: true, json: async () => DATASET });
+
+// `navigator` exists on Node >= 21 (read-only getter) but NOT on Node 20, which
+// is what CI runs. Define it either way so the vibration path is exercised and
+// the harness behaves the same on both.
+Object.defineProperty(globalThis, 'navigator', {
+  value: { vibrate() {} },
+  configurable: true,
+  writable: true,
+});
 
 /* Load the REAL application module. */
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -498,4 +505,33 @@ test('the hero pool renders every hero and marks used ones', async () => {
     1,
     'only the committed hero is marked used'
   );
+});
+
+test('REGRESSION: dragging works when `navigator` does not exist (Node 20 / CI)', async () => {
+  // CI runs Node 20, which has NO global `navigator`. app.js touched
+  // `navigator.vibrate` during drag start, so the whole build failed at the
+  // test step while passing on Node 24 locally. Reproduce that here: remove the
+  // global, drag, and require it to still work.
+  await resetDraft();
+
+  const hadNav = 'navigator' in globalThis;
+  const saved = hadNav ? globalThis.navigator : undefined;
+  let removed = false;
+  try {
+    removed = delete globalThis.navigator;
+  } catch {
+    removed = false;
+  }
+
+  try {
+    dragTo(poolItem(10), teamEnemy);
+    assert.equal(count('enemy'), 1, 'drag must work without a navigator global');
+    assert.equal(removed, true, 'navigator was actually removed for this test');
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: saved ?? { vibrate() {} },
+      configurable: true,
+      writable: true,
+    });
+  }
 });
