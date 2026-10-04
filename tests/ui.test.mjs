@@ -205,7 +205,7 @@ const documentStub = {
 /* Pre-register every element app.js looks up. */
 const IDS = [
   'app', 'loading', 'metaBtn', 'metaPanel', 'detail', 'detailBody', 'detailClose',
-  'ourSlots', 'enemySlots', 'ourCount', 'enemyCount', 'recs', 'weak', 'poolPanel',
+  'ourSlots', 'enemySlots', 'ourCount', 'enemyCount', 'recs', 'poolPanel',
   'pool', 'search', 'sideToggle', 'resetBtn', 'minGames',
   'wCounter', 'wSynergy', 'wBase', 'wCounterOut', 'wSynergyOut', 'wBaseOut',
 ];

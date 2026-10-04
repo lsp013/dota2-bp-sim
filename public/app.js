@@ -7,7 +7,6 @@
 
 import {
   recommend,
-  enemyWeaknesses,
   lookupPair,
   heroBase,
 } from './lib/recommend.mjs';
@@ -137,7 +136,6 @@ function bindControls() {
 function render() {
   renderTeams();
   renderRecs();
-  renderWeaknesses();
   renderPool();
 }
 
@@ -254,65 +252,6 @@ function renderRecs() {
     rank.textContent = `#${i + 1}`;
 
     btn.append(rank, img, main, score);
-    el.appendChild(btn);
-  });
-}
-
-function renderWeaknesses() {
-  const el = $('#weak');
-  el.innerHTML = '';
-  if (!state.enemy.length) {
-    el.innerHTML = '<p class="empty-note">先选出敌方英雄，这里会列出针对他们的英雄。</p>';
-    return;
-  }
-
-  const list = enemyWeaknesses(state.data, state.enemy, {
-    minGames: Math.max(50, state.minGames),
-    limit: 10,
-  }).filter((x) => !state.our.includes(x.heroId));
-
-  if (!list.length) {
-    el.innerHTML = '<p class="empty-note">没有样本量足够的对位数据。</p>';
-    return;
-  }
-
-  const max = list[0].score || 1;
-  list.forEach((w) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'rec';
-    btn.addEventListener('click', () => openDetail(w.heroId));
-
-    const h = heroById(w.heroId);
-    const img = document.createElement('img');
-    img.src = iconUrl(h.name);
-    img.alt = w.name;
-    img.loading = 'lazy';
-
-    const main = document.createElement('div');
-    main.className = 'rec-main';
-    const nameRow = document.createElement('div');
-    nameRow.className = 'rec-name';
-    nameRow.textContent = w.name;
-    const sub = document.createElement('div');
-    sub.className = 'rec-sub';
-    const worstName = heroById(w.worst.vs)?.n ?? '?';
-    sub.textContent =
-      `覆盖 ${w.covers}/${w.total} 敌方英雄 · 最克 ${worstName} ${pct(w.worst.p)} (${w.worst.g} 场)`;
-
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-    const fill = document.createElement('i');
-    fill.style.width = `${Math.max(3, (w.score / max) * 100)}%`;
-    bar.appendChild(fill);
-
-    main.append(nameRow, sub, bar);
-
-    const score = document.createElement('div');
-    score.className = 'rec-score';
-    score.textContent = pct(w.score);
-
-    btn.append(img, main, score);
     el.appendChild(btn);
   });
 }

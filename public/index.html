@@ -56,31 +56,26 @@
   </section>
 
   <section class="panels">
-    <div class="panel">
+    <div class="panel" id="poolPanel" data-drop="pool">
+      <h3>英雄池</h3>
+      <div class="pool-head">
+        <input type="search" id="search" placeholder="搜索英雄…" autocomplete="off">
+        <div class="side-toggle" id="sideToggle" role="group" aria-label="点击英雄加入哪一方">
+          <button type="button" data-side="our" class="active" aria-pressed="true">加入我方</button>
+          <button type="button" data-side="enemy" aria-pressed="false">加入敌方</button>
+        </div>
+      </div>
+      <p class="hint">
+        点按加入所选一方 · 也可以直接把英雄<b>拖到</b>上方我方/敌方栏位（拖回这里可移除）
+      </p>
+      <div id="pool" class="pool"></div>
+    </div>
+
+    <div class="panel" id="recsPanel">
       <h3>推荐选人</h3>
       <p class="hint">基于威尔逊下界排序，低样本已自动降权。点按查看依据。</p>
       <div id="recs" class="recs"></div>
     </div>
-    <div class="panel">
-      <h3>敌方阵容弱点</h3>
-      <p class="hint">对敌方每个英雄均有较好对位记录的英雄。</p>
-      <div id="weak" class="recs"></div>
-    </div>
-  </section>
-
-  <section class="panel" id="poolPanel" data-drop="pool">
-    <h3>英雄池</h3>
-    <div class="pool-head">
-      <input type="search" id="search" placeholder="搜索英雄…" autocomplete="off">
-      <div class="side-toggle" id="sideToggle" role="group" aria-label="点击英雄加入哪一方">
-        <button type="button" data-side="our" class="active" aria-pressed="true">加入我方</button>
-        <button type="button" data-side="enemy" aria-pressed="false">加入敌方</button>
-      </div>
-    </div>
-    <p class="hint" id="poolHint">
-      点按加入所选一方 · 也可以直接把英雄<b>拖到</b>上方我方/敌方栏位（拖回这里可移除）
-    </p>
-    <div id="pool" class="pool"></div>
   </section>
 </main>
 

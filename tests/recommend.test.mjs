@@ -5,7 +5,6 @@ import {
   heroBase,
   vsSet,
   recommend,
-  enemyWeaknesses,
   DEFAULT_WEIGHTS,
   MIN_PAIR_GAMES,
 } from '../src/recommend.mjs';
@@ -120,19 +119,6 @@ test('recommend is deterministic and sorted descending', () => {
 test('recommend handles an empty draft without throwing', () => {
   const out = recommend(fixture(), {});
   assert.ok(Array.isArray(out));
-});
-
-test('enemyWeaknesses surfaces heroes that beat the enemy', () => {
-  const ds = fixture();
-  // Enemy picked hero 1. Hero 2 beat hero 1 in 40% of games -> weak counter.
-  const w = enemyWeaknesses(ds, [1], { minGames: 50, limit: 5 });
-  assert.ok(Array.isArray(w));
-});
-
-test('enemyWeaknesses ignores thin samples via minGames', () => {
-  const ds = fixture();
-  const w = enemyWeaknesses(ds, [1], { minGames: 500, limit: 5 });
-  assert.equal(w.length, 0, 'nothing should pass a 500-game bar');
 });
 
 test('default weights sum to 1 so scores stay interpretable', () => {
@@ -252,26 +238,3 @@ test('full coverage leaves the counter estimate untouched', () => {
   assert.ok(Math.abs(c.parts.counterAdj - c.parts.counter) < 1e-9);
 });
 
-test('enemyWeaknesses reports coverage relative to the whole enemy team', () => {
-  const ds = {
-    meta: {},
-    heroes: [
-      { id: 1, n: 'E1', attr: 'agi', atk: 'Melee', roles: [] },
-      { id: 2, n: 'E2', attr: 'str', atk: 'Melee', roles: [] },
-      { id: 3, n: 'C', attr: 'int', atk: 'Ranged', roles: [] },
-    ],
-    matchups: {
-      // C loses to E1 (so C counters E1). Nothing recorded for E2.
-      1: { 3: { g: 300, w: 120, p: 0.4, lb: 0.35, ub: 0.45, t: 'high' } },
-      2: {},
-      3: {},
-    },
-  };
-  const w = enemyWeaknesses(ds, [1, 2], { minGames: 100, limit: 5 });
-  const c = w.find((x) => x.heroId === 3);
-  assert.ok(c, 'candidate found');
-  assert.equal(c.covers, 1);
-  assert.equal(c.total, 2);
-  assert.ok(c.coverage < 1, 'partial coverage reported');
-  assert.equal(c.worst.vs, 1, 'worst-case enemy id is a hero id, not a raw number');
-});

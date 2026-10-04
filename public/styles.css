@@ -146,23 +146,30 @@ select, input[type=search] {
 .hint { margin: 0 0 10px; font-size: 12px; color: var(--muted); line-height: 1.5; }
 
 /* ---------- recommendation cards ---------- */
-/* Capped height + own scrollbar: a long recommendation list must not push the
-   hero pool off the bottom of the screen. */
+/* The hero pool and the recommendation list sit side by side, so BOTH are
+   height-capped with their own scrollbar: neither list can push the other off
+   the screen, and the two columns stay aligned. */
 .recs {
   display: flex; flex-direction: column; gap: 8px;
-  max-height: 360px;
+  max-height: min(70vh, 620px);
+}
+.pool {
+  max-height: min(70vh, 620px);
+}
+.recs, .pool {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 6px;
   scrollbar-width: thin;
   scrollbar-color: #3d444d transparent;
 }
-.recs::-webkit-scrollbar { width: 8px; }
-.recs::-webkit-scrollbar-track { background: transparent; }
-.recs::-webkit-scrollbar-thumb { background: #3d444d; border-radius: 4px; }
-.recs::-webkit-scrollbar-thumb:hover { background: #525a63; }
+.recs::-webkit-scrollbar, .pool::-webkit-scrollbar { width: 8px; }
+.recs::-webkit-scrollbar-track, .pool::-webkit-scrollbar-track { background: transparent; }
+.recs::-webkit-scrollbar-thumb, .pool::-webkit-scrollbar-thumb { background: #3d444d; border-radius: 4px; }
+.recs::-webkit-scrollbar-thumb:hover, .pool::-webkit-scrollbar-thumb:hover { background: #525a63; }
 @media (max-width: 860px) {
   .recs { max-height: 46vh; }
+  .pool { max-height: 50vh; }
 }
 .rec {
   display: flex; align-items: center; gap: 10px;
@@ -222,9 +229,12 @@ select, input[type=search] {
 }
 .side-toggle button[data-side=enemy].active { background: #a4322c; }
 
+/* The pool now lives in a half-width column next to the recommendations, so the
+   tile minimum is smaller than it was when this section spanned the page. */
 .pool {
   display: grid; gap: 6px; margin-top: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  align-content: start;
 }
 .pool-item {
   display: flex; align-items: center; gap: 6px;
