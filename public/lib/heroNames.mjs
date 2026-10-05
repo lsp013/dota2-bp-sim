@@ -24,6 +24,19 @@
  */
 
 /** Official Dota 2 Simplified-Chinese client names, keyed by Valve hero id. */
+/**
+ * Official Dota 2 Simplified-Chinese client names, keyed by Valve hero id.
+ *
+ * GENERATED from https://www.dota2.com/datafeed/herolist?language=schinese
+ * rather than typed from memory. The previous hand-written table had several
+ * community names where the client uses something else — Juggernaut is 主宰
+ * (not 剑圣), Necrophos is 瘟疫法师 (not 死灵法师), Nature's Prophet is 自然先知,
+ * Lone Druid is 独行德鲁伊, Underlord is 孽主. Community names are still
+ * searchable; they live in HERO_NICKNAMES below.
+ *
+ * The dataset itself also carries a per-hero `zh` field (filled in CI from the
+ * same feed); this table is the fallback for datasets that lack it.
+ */
 export const HERO_ZH = {
   1: '敌法师',
   2: '斧王',
@@ -32,7 +45,7 @@ export const HERO_ZH = {
   5: '水晶室女',
   6: '卓尔游侠',
   7: '撼地者',
-  8: '剑圣',
+  8: '主宰',
   9: '米拉娜',
   10: '变体精灵',
   11: '影魔',
@@ -59,7 +72,7 @@ export const HERO_ZH = {
   33: '谜团',
   34: '修补匠',
   35: '狙击手',
-  36: '死灵法师',
+  36: '瘟疫法师',
   37: '术士',
   38: '兽王',
   39: '痛苦女王',
@@ -76,7 +89,7 @@ export const HERO_ZH = {
   50: '戴泽',
   51: '发条技师',
   52: '拉席克',
-  53: '先知',
+  53: '自然先知',
   54: '噬魂鬼',
   55: '黑暗贤者',
   56: '克林克兹',
@@ -103,7 +116,7 @@ export const HERO_ZH = {
   77: '狼人',
   78: '酒仙',
   79: '暗影恶魔',
-  80: '德鲁伊',
+  80: '独行德鲁伊',
   81: '混沌骑士',
   82: '米波',
   83: '树精卫士',
@@ -131,7 +144,7 @@ export const HERO_ZH = {
   105: '工程师',
   106: '灰烬之灵',
   107: '大地之灵',
-  108: '深渊领主',
+  108: '孽主',
   109: '恐怖利刃',
   110: '凤凰',
   111: '神谕者',
@@ -150,8 +163,8 @@ export const HERO_ZH = {
   136: '玛西',
   137: '兽',
   138: '琼英碧灵',
-  145: '凯兹',
-  155: '拉戈',
+  145: '凯',
+  155: '朗戈',
 };
 
 /**
@@ -165,7 +178,7 @@ export const HERO_NICKNAMES = {
   5: ['冰女', 'CM'],
   6: ['小黑', '卓尔'],
   7: ['小牛', '神牛', 'ES'],
-  8: ['主宰', 'JUGG', '剑圣'],
+  8: ['JUGG', '剑圣', '剑圣主宰'],
   9: ['白虎', 'POTM', '月女'],
   10: ['水人', '变体'],
   11: ['SF', '影魔'],
@@ -188,7 +201,7 @@ export const HERO_NICKNAMES = {
   32: ['隐刺'],
   34: ['修补'],
   35: ['火枪', '矮子'],
-  36: ['NEC', '死灵法', '死灵'],
+  36: ['NEC', '死灵法师', '死灵法', '死灵'],
   37: ['WL'],
   38: ['BM'],
   39: ['女王', 'QOP'],
@@ -205,7 +218,7 @@ export const HERO_NICKNAMES = {
   50: ['毒狗'],
   51: ['发条', 'Clock'],
   52: ['老鹿', '鹿'],
-  53: ['NP'],
+  53: ['NP', '先知'],
   54: ['小狗', 'LS'],
   55: ['黑贤', 'DS'],
   56: ['骨弓'],
@@ -231,7 +244,7 @@ export const HERO_NICKNAMES = {
   76: ['黑鸟', 'OD'],
   78: ['熊猫', 'Brew'],
   79: ['SD'],
-  80: ['熊德', 'LD'],
+  80: ['熊德', 'LD', '德鲁伊'],
   81: ['混沌', 'CK'],
   82: ['地卜师'],
   83: ['大树', 'Treant'],
@@ -258,7 +271,7 @@ export const HERO_NICKNAMES = {
   105: ['炸弹人', 'Techies'],
   106: ['火猫', 'Ember'],
   107: ['土猫', 'Earth'],
-  108: ['大屁股', 'Underlord'],
+  108: ['大屁股', 'Underlord', '深渊领主', '深渊'],
   109: ['TB', '魂守', '灵魂守卫'],
   111: ['神谕', 'Oracle'],
   112: ['冰龙', 'WW'],
@@ -274,10 +287,10 @@ export const HERO_NICKNAMES = {
   131: ['小丑', 'Ringmaster'],
   135: ['太阳女', 'Dawn'],
   136: ['Marci'],
-  137: ['野兽', 'Primal Beast'],
+  137: ['野兽', 'Primal Beast', '獸'],
   138: ['奶绿', 'Muerta'],
-  145: ['Kez'],
-  155: ['Largo'],
+  145: ['Kez', '凯兹', '凯滋'],
+  155: ['Largo', '朗格', '拉戈'],
 };
 
 /**
@@ -286,11 +299,26 @@ export const HERO_NICKNAMES = {
  * @param {{id:number, n:string, name:string}} hero
  * @returns {string[]}
  */
+/**
+ * The hero's Simplified-Chinese name.
+ *
+ * Prefers the `zh` field the data pipeline writes from Valve's feed, because
+ * that stays current automatically when a hero is released. Falls back to the
+ * generated table so an older dataset, or a test fixture, still searches in
+ * Chinese.
+ *
+ * @param {{id:number, zh?:string}} hero
+ * @returns {string|null}
+ */
+export function heroChineseName(hero) {
+  return hero?.zh ?? HERO_ZH[hero?.id] ?? null;
+}
+
 export function heroSearchTerms(hero) {
   return [
     hero.n,
     hero.name,
-    HERO_ZH[hero.id],
+    heroChineseName(hero),
     ...(HERO_NICKNAMES[hero.id] ?? []),
   ].filter(Boolean);
 }
@@ -318,5 +346,5 @@ export function heroMatchesQuery(hero, query) {
  * @returns {Array<{id:number, n:string}>}
  */
 export function heroesMissingChineseName(heroes) {
-  return (heroes ?? []).filter((h) => !HERO_ZH[h.id]);
+  return (heroes ?? []).filter((h) => !heroChineseName(h));
 }

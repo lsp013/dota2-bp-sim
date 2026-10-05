@@ -38,6 +38,7 @@ import {
   fetchPatchList,
   mapPool,
 } from './lib/opendota.mjs';
+import { fetchChineseHeroNames } from './lib/valveNames.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -78,6 +79,18 @@ async function main() {
   const patches = await fetchPatchList();
   const currentPatch = patches.length ? patches[patches.length - 1] : null;
   console.log(`      current patch: ${currentPatch?.name ?? 'unknown'}`);
+
+  // Official Simplified-Chinese names, straight from Valve's own hero feed.
+  // Best-effort: if it is unreachable the site still searches Chinese via the
+  // generated fallback table in src/heroNames.mjs.
+  console.log('[2b/4] fetching official Chinese hero names...');
+  let zhNames = new Map();
+  try {
+    zhNames = await fetchChineseHeroNames();
+    console.log(`      ${zhNames.size} Chinese names`);
+  } catch (err) {
+    console.warn(`      valve feed unavailable (${err.message}) — using the fallback table`);
+  }
 
   console.log(`[3/4] fetching matchups for ${heroes.length} heroes...`);
   const byId = new Map(heroes.map((h) => [h.id, h]));
@@ -166,6 +179,10 @@ async function main() {
       id: h.id,
       name: h.name,
       n: h.localized_name,
+      // Official Simplified-Chinese name from Valve's feed; omitted when the
+      // feed was unreachable, in which case the browser falls back to the
+      // generated table in src/heroNames.mjs.
+      ...(zhNames.get(h.id) ? { zh: zhNames.get(h.id).zh } : {}),
       attr: h.primary_attr,
       atk: h.attack_type,
       roles: h.roles ?? [],

@@ -6,23 +6,75 @@ import {
   HERO_NICKNAMES,
   heroSearchTerms,
   heroMatchesQuery,
+  heroChineseName,
   heroesMissingChineseName,
 } from '../src/heroNames.mjs';
 
 const readHeroes = async () =>
   JSON.parse(await readFile(new URL('../public/data/data.json', import.meta.url), 'utf8')).heroes;
 
-test('EVERY hero in the dataset has a Chinese name', async () => {
+test('EVERY hero resolves a Chinese name (dataset field or fallback table)', async () => {
   // When Valve ships a new hero this fails and names it, which is the prompt to
-  // add the entry. A silent gap would mean one hero is unsearchable in Chinese.
+  // regenerate the table (node scripts/patch-hero-names.mjs). A silent gap
+  // would mean one hero is unsearchable in Chinese with no visible symptom.
   const heroes = await readHeroes();
   const missing = heroesMissingChineseName(heroes);
   assert.deepEqual(
     missing.map((h) => `${h.n}(${h.id})`),
     [],
-    `缺少中文名，请补进 src/heroNames.mjs：${missing.map((h) => h.n).join(', ')}`
+    `缺中文名：${missing.map((h) => h.n).join(', ')}`
   );
-  assert.equal(Object.keys(HERO_ZH).length >= heroes.length, true);
+});
+
+test('the dataset field is populated for all heroes or none', async () => {
+  // scripts/fetch-data.mjs fills `zh` from Valve's feed. If that step half
+  // worked, some heroes would quietly fall back to the static table while
+  // others used live data — invisible in the UI, confusing to debug.
+  const heroes = await readHeroes();
+  const withZh = heroes.filter((h) => h.zh).length;
+  assert.ok(
+    withZh === 0 || withZh === heroes.length,
+    `zh 只填了 ${withZh}/${heroes.length} 个英雄，抓取步骤可能只成功了一部分`
+  );
+});
+
+test('the dataset field wins over the fallback table', () => {
+  assert.equal(heroChineseName({ id: 36, zh: '自定义名' }), '自定义名');
+  assert.equal(heroChineseName({ id: 36 }), HERO_ZH[36], 'falls back to the table');
+  assert.equal(heroChineseName({ id: 999999 }), null);
+});
+
+test('REGRESSION: names match the official client, not community usage', async () => {
+  // These were wrong in the hand-written table. The client names are
+  // 主宰/瘟疫法师/自然先知/独行德鲁伊/孽主 — community usage (剑圣/死灵法师/
+  // 深渊领主/…) is kept as aliases instead of as the primary name.
+  const heroes = await readHeroes();
+  const zhOf = (en) => heroes.find((h) => h.n === en)?.zh;
+
+  assert.equal(zhOf('Juggernaut'), '主宰');
+  assert.equal(zhOf('Necrophos'), '瘟疫法师');
+  assert.equal(zhOf("Nature's Prophet"), '自然先知');
+  assert.equal(zhOf('Lone Druid'), '独行德鲁伊');
+  assert.equal(zhOf('Underlord'), '孽主');
+  assert.equal(zhOf('Kez'), '凯');
+  assert.equal(zhOf('Largo'), '朗戈');
+});
+
+test('REGRESSION: the community names for those heroes are still searchable', async () => {
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+
+  assert.ok(find('剑圣').includes('Juggernaut'), '剑圣 is how players say it');
+  assert.ok(find('死灵法师').includes('Necrophos'));
+  assert.ok(find('死灵法').includes('Necrophos'));
+  assert.ok(find('大屁股').includes('Underlord'));
+  assert.ok(find('深渊领主').includes('Underlord'));
+  // The user's own spelling for Largo; the client writes 朗戈.
+  assert.ok(find('朗格').includes('Largo'), '朗格 alias');
+  assert.ok(find('朗戈').includes('Largo'), 'official spelling');
+  assert.ok(find('拉戈').includes('Largo'), 'previous wrong spelling, kept working');
+  assert.ok(find('凯兹').includes('Kez'));
+  assert.ok(find('兽').includes('Primal Beast'), 'simplified glyph');
 });
 
 test('no nickname is defined for an unknown hero id', async () => {

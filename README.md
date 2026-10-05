@@ -210,8 +210,15 @@ https://<你的用户名>.github.io/dota2-bp-sim/
 敌法    冰魂    奶绿    小鱼    火枪    NEC    anti-mage    npc_dota_hero_axe
 ```
 
-中文名与外号表在 `src/heroNames.mjs`，可以直接加自己的叫法（搜索是子串匹配，多写无害）。
-**有一条测试保证每个英雄都有中文名**——Valve 出新英雄时那条测试会失败并报出英雄名，提醒补录，避免某个英雄悄悄搜不到。
+中文名来自 **Valve 官方 datafeed**（`dota2.com/datafeed/herolist?language=schinese`），抓取时写进数据集，
+CI 会自动更新——所以新英雄一出就有正确译名，不依赖任何人手抄。
+
+**官方译名和玩家习惯并不总是一样**，两者都能搜到：客户端写「主宰」，玩家说「剑圣」；客户端写「瘟疫法师」，
+玩家说「死灵法师」；还有「自然先知/先知」「独行德鲁伊/德鲁伊」「孽主/深渊领主」。官方名作为主名称显示，
+社区叫法存在 `src/heroNames.mjs` 的外号表里。
+
+外号表可以直接加自己的叫法（子串匹配，多写无害）。
+**有一条测试保证每个英雄都能解析出中文名**——Valve 出新英雄时会失败并报出英雄名，提醒重新生成。
 
 **拖拽**：直接把英雄从池子拖到上方的「我方」或「敌方」栏位。
 
@@ -247,6 +254,8 @@ scripts/
   fetch-data.mjs             OpenDota 抓取管线
   build-stratz.mjs           把浏览器抓来的 STRATZ dump 转成同结构数据集
   slim-dataset.mjs           把旧格式数据集转成精简格式（不重新抓取，不动 g/w）
+  patch-hero-names.mjs       只给数据集补/更新官方中文名（不动 matchups）
+  lib/valveNames.mjs         Valve 官方英雄名 feed 的读取
   stratz-matrix-snippet.js   全英雄矩阵的浏览器控制台脚本（需手动粘贴）
   stratz-browser-snippet.js  单英雄对位探测（NEC 案例用）
   stratz-probe.mjs           Node 版探测（会被 Cloudflare 拦，保留作对照）
@@ -254,7 +263,7 @@ scripts/
   serve.mjs                  零依赖本地静态服务器
 tests/
   wilson.test.mjs        9 个测试
-  heroNames.test.mjs     9 个测试（含"每个英雄都有中文名"的覆盖测试）
+  heroNames.test.mjs    13 个测试（含"每个英雄都能解析中文名"的覆盖测试）
   dataset.test.mjs       9 个测试（水合：无损、幂等、容错）
   recommend.test.mjs    22 个测试
   draft.test.mjs        18 个测试
@@ -267,7 +276,7 @@ tests/
 「英雄池」和「推荐选人」两个面板各自有独立滚动条（最大高度 `min(70vh, 620px)`，
 窄屏分别 50vh / 46vh），所以两边都不会被对方的长列表挤出屏幕。
 
-合计 **103 个测试**，在 Node 20.20.2（CI 同版本）与 Node 24 上全绿。
+合计 **107 个测试**，在 Node 20.20.2（CI 同版本）与 Node 24 上全绿。
 `tests/ui.test.mjs` 用一份手写的迷你 DOM 驱动真实的 `app.js`，
 因此能覆盖"点选敌方英雄"、"点击不被拖拽逻辑吞掉"、"拖拽换边"、"切换数据源"
 这类只有交互层才会暴露的 bug。
