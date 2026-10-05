@@ -207,6 +207,7 @@ const IDS = [
   'app', 'loading', 'metaBtn', 'metaPanel', 'detail', 'detailBody', 'detailClose',
   'ourSlots', 'enemySlots', 'ourCount', 'enemyCount', 'recs', 'poolPanel',
   'sourceFab', 'sourceNote',
+  'banSlots', 'banCount', 'banPanel',
   'pool', 'search', 'sideToggle', 'resetBtn', 'minGames',
   'wCounter', 'wSynergy', 'wBase', 'wCounterOut', 'wSynergyOut', 'wBaseOut',
 ];
@@ -216,8 +217,10 @@ for (const id of IDS) {
   byId.set(id, el);
 }
 byId.get('minGames').value = '30';
-// Mirrors index.html: the hero-pool SECTION is the "drop here to remove" zone.
+// Mirrors index.html: the hero-pool SECTION is the "drop here to remove" zone,
+// and the ban panel is a drop target of its own.
 byId.get('poolPanel').setAttribute('data-drop', 'pool');
+byId.get('banPanel').setAttribute('data-drop', 'ban');
 
 // Team panels are drop zones.
 const teamOur = byId.get('teamOur') ?? new El('div');
@@ -232,9 +235,9 @@ teamEnemy.className = 'team theirs';
 teamEnemy.setAttribute('data-drop', 'enemy');
 byId.set('teamEnemy', teamEnemy);
 
-// Side toggle with two buttons, mirroring index.html (enemy armed by default).
+// Side toggle with three buttons, mirroring index.html (enemy armed by default).
 const toggle = byId.get('sideToggle');
-for (const side of ['our', 'enemy']) {
+for (const side of ['our', 'ban', 'enemy']) {
   const b = new El('button');
   b.setAttribute('data-side', side);
   if (side === 'enemy') b.className = 'active';
@@ -493,6 +496,144 @@ test('tapping a pool hero after arming our side adds it to OUR team', async () =
   tapPoolItem(1);
   assert.equal(count('our'), 1);
   assert.equal(count('enemy'), 0);
+});
+
+/* ---------------- ban bucket ---------------- */
+
+const banCount = () => Number(q('banCount').textContent);
+
+test('the side toggle offers ban位 between the two teams', () => {
+  const sides = byId.get('sideToggle').children.map((b) => b.dataset.side);
+  assert.deepEqual(sides, ['our', 'ban', 'enemy'], 'ban sits in the middle');
+});
+
+test('with ban位 armed, a tap bans instead of picking', async () => {
+  await resetDraft();
+  clickToggle('ban');
+  tapPoolItem(3);
+
+  assert.equal(banCount(), 1, 'hero filed under ban');
+  assert.equal(count('our'), 0);
+  assert.equal(count('enemy'), 0);
+
+  const tile = q('banSlots').children[0];
+  assert.ok(tile, 'ban list rendered the hero');
+  assert.deepEqual(tile.children.map((c) => c.tagName), ['IMG']);
+});
+
+const recHeroIds = () => q('recs').children.map((c) => Number(c.dataset.hero)).filter(Boolean);
+
+test('a banned hero disappears from the recommendations', async () => {
+  // This is the entire point of a ban, so assert the engine's OUTPUT rather
+  // than trusting that the bucket was filled.
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1); // give the engine something to rank against
+  clickToggle('our');
+
+  const before = recHeroIds();
+  assert.ok(before.length > 0, 'recommendations render once there is a pick');
+  const victim = before[0];
+
+  clickToggle('ban');
+  tapPoolItem(victim);
+  assert.equal(banCount(), 1, 'hero banned');
+
+  assert.ok(
+    !recHeroIds().includes(victim),
+    `banned hero #${victim} must not be recommended`
+  );
+});
+
+test('a banned hero can be brought back with two taps (toggle, then place)', async () => {
+  // The pool tile is a toggle, so the first tap on an assigned hero always means
+  // "take it back" — it does not move straight to the armed side. Two taps, or
+  // one drag. Asserted explicitly because the sequence is not obvious.
+  await resetDraft(); // armed: our
+  clickToggle('ban');
+  tapPoolItem(1);
+  assert.equal(banCount(), 1, 'banned by the first tap');
+
+  tapPoolItem(1);
+  assert.equal(banCount(), 0, 'second tap takes it back to the pool');
+  assert.equal(count('our'), 0, 'and does NOT place it anywhere yet');
+
+  clickToggle('our');
+  tapPoolItem(1);
+  assert.equal(count('our'), 1, 'third tap places it on the armed side');
+});
+
+test('dragging a banned hero onto a team moves it straight there', async () => {
+  await resetDraft();
+  clickToggle('ban');
+  tapPoolItem(3);
+  assert.equal(banCount(), 1);
+
+  const tile = q('banSlots').children[0];
+  assert.ok(tile);
+  dragTo(tile, teamOur);
+
+  assert.equal(banCount(), 0, 'no longer banned');
+  assert.equal(count('our'), 1, 'one drag is enough to move it');
+});
+
+test('bans are uncapped', async () => {
+  await resetDraft();
+  clickToggle('ban');
+  for (const h of HEROES) tapPoolItem(h.id);
+  assert.equal(banCount(), HEROES.length, 'every hero could be banned');
+  assert.equal(count('our'), 0);
+  assert.equal(count('enemy'), 0);
+});
+
+test('clicking a ban tile removes the ban', async () => {
+  await resetDraft();
+  clickToggle('ban');
+  tapPoolItem(2);
+  assert.equal(banCount(), 1);
+
+  q('banSlots').children[0].fire('click', {});
+  assert.equal(banCount(), 0, 'un-banned');
+});
+
+test('dragging a hero onto the ban panel bans it', async () => {
+  await resetDraft();
+  dragTo(poolItem(4), q('banPanel'));
+  assert.equal(banCount(), 1);
+  assert.equal(count('enemy'), 0);
+});
+
+/* ---------------- tap to place, tap again to take back ---------------- */
+
+test('tapping the same pool hero twice takes it back', async () => {
+  await resetDraft(); // arms our side
+  tapPoolItem(5);
+  assert.equal(count('our'), 1, 'first tap places');
+
+  tapPoolItem(5);
+  assert.equal(count('our'), 0, 'second tap takes back');
+  assert.equal(banCount(), 0);
+});
+
+test('the toggle takes back an enemy pick regardless of which side is armed', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(6);
+  assert.equal(count('enemy'), 1);
+
+  // Arm a DIFFERENT bucket; the tap must still mean "take it back".
+  clickToggle('ban');
+  tapPoolItem(6);
+  assert.equal(count('enemy'), 0, 'removed from the enemy team');
+  assert.equal(banCount(), 0, 'and not filed into ban');
+});
+
+test('a used pool tile stays visible and advertises the take-back', async () => {
+  await resetDraft();
+  tapPoolItem(7);
+  const tile = poolItem(7);
+  assert.ok(tile._classes.has('used'), 'marked as assigned');
+  assert.match(tile.title, /取回/, `tooltip should say take back, got "${tile.title}"`);
 });
 
 test('REGRESSION: with "加入敌方" armed, a tap adds to the ENEMY team', async () => {

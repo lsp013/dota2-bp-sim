@@ -55,6 +55,11 @@
     </div>
   </section>
 
+  <section class="panel ban-panel" id="banPanel" data-drop="ban">
+    <h3>ban位 <span id="banCount">0</span> <small>禁用的英雄不会出现在推荐里，数量不限</small></h3>
+    <div id="banSlots" class="slots"></div>
+  </section>
+
   <section class="panels">
     <div class="panel" id="poolPanel" data-drop="pool">
       <h3>英雄池</h3>
@@ -62,11 +67,12 @@
         <input type="search" id="search" placeholder="搜索英雄（中文 / 英文 / 外号）…" autocomplete="off">
         <div class="side-toggle" id="sideToggle" role="group" aria-label="点击英雄加入哪一方">
           <button type="button" data-side="our" aria-pressed="false">加入我方</button>
+          <button type="button" data-side="ban" aria-pressed="false" title="禁用：不参与推荐，数量不限">ban位</button>
           <button type="button" data-side="enemy" class="active" aria-pressed="true">加入敌方</button>
         </div>
       </div>
       <p class="hint">
-        点按加入所选一方 · 拖到上方栏位也可 · <b>点上方头像即可移除</b>
+        点按加入所选一方，<b>再点一次灰掉的头像即取回</b> · 拖拽同样可用
       </p>
       <div id="pool" class="pool"></div>
     </div>

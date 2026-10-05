@@ -258,6 +258,9 @@ select, input[type=search] {
 .pool-item:hover { border-color: var(--accent); }
 /* Tint the pool red while "加入敌方" is armed. */
 .pool.side-enemy .pool-item:hover { border-color: var(--red); }
+/* Tint grey while "ban位" is armed, so the tap target is never ambiguous. */
+.pool.side-ban .pool-item:hover { border-color: #a4322c; background: #241a1a; }
+.side-toggle button[data-side=ban].active { background: #a4322c; }
 
 /* Long-press drives drag on touch, so suppress the OS callout/selection that
    iOS and Android would otherwise show. `touch-action: manipulation` keeps
@@ -275,7 +278,13 @@ select, input[type=search] {
   object-fit: cover; object-position: center;
   border-radius: 6px; display: block;
 }
-.pool-item.used { opacity: .3; }
+/* Assigned heroes stay in the pool as the "tap to take back" target, so they
+   must remain clearly visible and obviously clickable rather than ghosted out. */
+.pool-item.used {
+  opacity: .55;
+  border-style: dashed;
+}
+.pool-item.used:hover { opacity: .9; border-color: var(--yellow); }
 
 /* ---------- detail sheet ---------- */
 .sheet {
@@ -392,6 +401,25 @@ table.mu .who img { width: 22px; height: 22px; border-radius: 3px; }
 
 /* Leave room so the switcher never covers the last row of the hero pool. */
 main { padding-bottom: 64px; }
+
+/* ---------- ban list ---------- */
+/* Uncapped, so it has no fixed slots: the icons just wrap. Muted red so it
+   reads as "out of play" rather than as a third team. */
+.ban-panel {
+  border-color: #4a2d2d;
+  background: linear-gradient(var(--panel), #1b1416);
+}
+.ban-panel h3 { color: #ffa198; }
+.ban-panel h3 span { color: var(--text); font-variant-numeric: tabular-nums; }
+.ban-panel h3 small {
+  color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 4px;
+}
+.ban-panel .slot { border-color: #4a2d2d; }
+.ban-panel .slot:hover, .ban-panel .slot:focus-visible {
+  border-color: var(--red); background: #2a1a1a;
+}
+.ban-panel.active-target { border-color: var(--red); }
+.ban-empty { color: var(--muted); font-size: 12px; }
 
 /* ---------- drag & drop ---------- */
 body.dragging {

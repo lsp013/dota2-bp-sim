@@ -10,7 +10,14 @@ import {
   lookupPair,
   heroBase,
 } from './lib/recommend.mjs';
-import { addHero, removeHero, usedHeroes, resolveDrop } from './lib/draft.mjs';
+import {
+  addHero,
+  removeHero,
+  usedHeroes,
+  resolveDrop,
+  resolvePoolTap,
+  sideOf,
+} from './lib/draft.mjs';
 import { mergeDatasets } from './lib/merge.mjs';
 import { hydrateDataset } from './lib/dataset.mjs';
 import { heroMatchesQuery } from './lib/heroNames.mjs';
@@ -49,7 +56,15 @@ const state = {
   our: [],
   enemy: [],
   /**
-   * Which team a plain tap on a hero-pool item adds to.
+   * Banned heroes — excluded from the recommendation entirely.
+   *
+   * Deliberately uncapped: a ban says "do not suggest this", which is not a
+   * statement about either draft, so any limit would be arbitrary.
+   */
+  ban: [],
+  /**
+   * Which bucket a plain tap on a hero-pool item files the hero into:
+   * 'our' | 'enemy' | 'ban'.
    *
    * Defaults to 'enemy': in a draft you normally enter the picks that already
    * exist on the other side first, and those are the ones the recommendation is
@@ -232,8 +247,11 @@ function bindControls() {
   });
 
   $('#resetBtn').addEventListener('click', () => {
+    // Clears all three buckets. Forgetting the bans meant a reset left heroes
+    // silently excluded from every later recommendation.
     state.our = [];
     state.enemy = [];
+    state.ban = [];
     render();
   });
 
@@ -273,8 +291,73 @@ function bindControls() {
 
 function render() {
   renderTeams();
+  renderBanPanel();
   renderRecs();
   renderPool();
+}
+
+/**
+ * Draw the ban list.
+ *
+ * Unlike a team this has no fixed slots — bans are uncapped, so the panel grows
+ * and the pool of icons simply wraps. Everything else matches a slot: click to
+ * un-ban, drag to move.
+ */
+function renderBanPanel() {
+  const el = $('#banSlots');
+  if (!el) return;
+  el.innerHTML = '';
+
+  for (const id of state.ban) {
+    const h = heroById(id);
+    if (!h) continue;
+    el.appendChild(buildHeroTile(h, 'ban'));
+  }
+  $('#banCount').textContent = state.ban.length;
+  el.classList.toggle('empty-note', state.ban.length === 0);
+  if (!state.ban.length) {
+    el.innerHTML = '<span class="ban-empty">还没有禁用任何英雄 · 把上方按钮切到「ban位」后点英雄即可</span>';
+  }
+}
+
+/**
+ * One clickable hero tile (used by both the team slots and the ban list).
+ * Click removes the hero from its bucket.
+ */
+function buildHeroTile(h, side) {
+  const d = document.createElement('div');
+  d.className = 'slot';
+  d.title = `${h.n} · 点击移除`;
+  d.setAttribute('role', 'button');
+  d.setAttribute('aria-label', `移除 ${h.n}`);
+  d.tabIndex = 0;
+  makeDraggable(d, h.id, side);
+
+  const img = document.createElement('img');
+  img.src = iconUrl(h.name);
+  // Decorative: the tile carries the name in its aria-label.
+  img.alt = '';
+  img.loading = 'lazy';
+
+  // A single click removes the hero. The drag gesture generates a click on
+  // release, so that one is swallowed first — otherwise moving a hero to
+  // another bucket would immediately remove it again.
+  d.addEventListener('click', () => {
+    if (DND.justDragged) {
+      DND.justDragged = false;
+      return;
+    }
+    removeFrom(side, h.id);
+  });
+  d.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      removeFrom(side, h.id);
+    }
+  });
+
+  d.append(img);
+  return d;
 }
 
 function renderTeams() {
@@ -291,40 +374,7 @@ function renderTeams() {
         continue;
       }
       const h = heroById(id);
-      const d = document.createElement('div');
-      d.className = 'slot';
-      d.title = `${h.n} · 点击移除`;
-      d.setAttribute('role', 'button');
-      d.setAttribute('aria-label', `移除 ${h.n}`);
-      d.tabIndex = 0;
-      makeDraggable(d, id, side);
-
-      const img = document.createElement('img');
-      img.src = iconUrl(h.name);
-      // Decorative: the slot carries the name in its aria-label.
-      img.alt = '';
-      img.loading = 'lazy';
-
-      // A single click on the portrait removes the hero — no need to drag it
-      // out. The drag gesture generates a click on release, so that one is
-      // swallowed first, otherwise moving a hero to the other team would
-      // immediately remove it again.
-      d.addEventListener('click', () => {
-        if (DND.justDragged) {
-          DND.justDragged = false;
-          return;
-        }
-        removeFrom(side, id);
-      });
-      d.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          removeFrom(side, id);
-        }
-      });
-
-      d.append(img);
-      el.appendChild(d);
+      if (h) el.appendChild(buildHeroTile(h, side));
     }
   };
   draw(state.our, '#ourSlots', 'our');
@@ -332,9 +382,10 @@ function renderTeams() {
   $('#ourCount').textContent = state.our.length;
   $('#enemyCount').textContent = state.enemy.length;
 
-  // Show which side a tap will fill.
+  // Show which bucket a tap will fill.
   $('#teamOur').classList.toggle('active-target', state.activeSide === 'our');
   $('#teamEnemy').classList.toggle('active-target', state.activeSide === 'enemy');
+  $('#banPanel')?.classList.toggle('active-target', state.activeSide === 'ban');
 }
 
 function renderRecs() {
@@ -344,6 +395,7 @@ function renderRecs() {
   const recs = recommend(state.data, {
     ourPicks: state.our,
     enemyPicks: state.enemy,
+    banned: state.ban,
     weights: state.weights,
     minPairGames: state.minGames,
     limit: 20,
@@ -360,6 +412,8 @@ function renderRecs() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'rec';
+    // Lets the ban logic be asserted from the DOM rather than inferred.
+    btn.dataset.hero = String(r.heroId);
     btn.addEventListener('click', () => openDetail(r.heroId));
 
     const img = document.createElement('img');
@@ -420,7 +474,7 @@ function renderRecs() {
 }
 
 function setActiveSide(side) {
-  state.activeSide = side === 'enemy' ? 'enemy' : 'our';
+  state.activeSide = side === 'enemy' ? 'enemy' : side === 'ban' ? 'ban' : 'our';
   updateSideButtons();
   renderTeams();
   renderPool();
@@ -451,19 +505,29 @@ function renderPool() {
   // community nicknames — see src/heroNames.mjs.
   const list = state.data.heroes.filter((h) => heroMatchesQuery(h, q));
 
-  // Colour-code so it is obvious which team a tap lands in.
+  // Colour-code so it is obvious which bucket a tap lands in.
   el.classList.toggle('side-enemy', state.activeSide === 'enemy');
+  el.classList.toggle('side-ban', state.activeSide === 'ban');
+
+  const SIDE_LABEL = { our: '我方', enemy: '敌方', ban: 'ban位' };
 
   for (const h of list) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'pool-item' + (used.has(h.id) ? ' used' : '');
+    const isUsed = used.has(h.id);
+    btn.className = 'pool-item' + (isUsed ? ' used' : '');
     btn.dataset.hero = String(h.id);
-    btn.title = `${h.n} · 加入${state.activeSide === 'enemy' ? '敌方' : '我方'}`;
+    // The tile doubles as a toggle, so the tooltip says what this tap will do.
+    btn.title = isUsed
+      ? `${h.n} · 点击取回`
+      : `${h.n} · 加入${SIDE_LABEL[state.activeSide] ?? ''}`;
     // Icon-only tiles: the name and the attribute letters were visual noise in a
     // grid you navigate by recognising portraits. The name stays as the
     // accessible label and the hover tooltip, so it is still discoverable.
     btn.setAttribute('aria-label', btn.title);
+
+    // Tap to place, tap again to take back. Deciding which is which lives in
+    // src/draft.mjs so it is unit-tested rather than inferred here.
     btn.addEventListener('click', () => {
       // Consume the click that the drag gesture itself generated; a later,
       // unrelated click must still work.
@@ -471,8 +535,9 @@ function renderPool() {
         DND.justDragged = false;
         return;
       }
-      if (used.has(h.id)) return; // already committed to a side
-      addTo(state.activeSide, h.id);
+      const action = resolvePoolTap(teams(), h.id, state.activeSide);
+      if (action.type === 'add') addTo(action.side, h.id);
+      else if (action.type === 'remove') removeFrom(action.side, h.id);
     });
     makeDraggable(btn, h.id, null);
 
@@ -490,11 +555,12 @@ function renderPool() {
 /* draft mutation                                                      */
 /* ------------------------------------------------------------------ */
 
-const teams = () => ({ our: state.our, enemy: state.enemy });
+const teams = () => ({ our: state.our, enemy: state.enemy, ban: state.ban });
 
 function applyTeams(next) {
   state.our = next.our;
   state.enemy = next.enemy;
+  state.ban = next.ban ?? [];
 }
 
 /**
@@ -524,6 +590,7 @@ function removeFrom(side, heroId) {
 
 /** Briefly highlight a full team so a refused drop is visible, not silent. */
 function flashTeam(side) {
+  if (side !== 'our' && side !== 'enemy') return; // the ban list is uncapped
   const el = side === 'our' ? $('#teamOur') : $('#teamEnemy');
   if (!el) return;
   el.classList.add('full-flash');
@@ -789,6 +856,7 @@ function openDetail(heroId) {
   const rec = recommend(state.data, {
     ourPicks: state.our,
     enemyPicks: state.enemy,
+    banned: state.ban,
     weights: state.weights,
     minPairGames: state.minGames,
     limit: 200,
