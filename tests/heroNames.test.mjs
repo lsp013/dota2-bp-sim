@@ -84,6 +84,65 @@ test('no nickname is defined for an unknown hero id', async () => {
   assert.deepEqual(strays, [], `外号表里有不存在的英雄 id: ${strays.join(', ')}`);
 });
 
+test('every alias actually resolves its own hero', async () => {
+  // An alias that does not match its own hero is a typo that would silently do
+  // nothing — the user types it and gets an empty pool.
+  const heroes = await readHeroes();
+  const problems = [];
+  for (const [id, aliases] of Object.entries(HERO_NICKNAMES)) {
+    const hero = heroes.find((h) => h.id === Number(id));
+    if (!hero) continue;
+    for (const alias of aliases) {
+      if (!heroMatchesQuery(hero, alias)) {
+        problems.push(`${hero.n}: 外号「${alias}」匹配不到自己`);
+      }
+    }
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('no hero lists the same alias twice', async () => {
+  const dupes = [];
+  for (const [id, aliases] of Object.entries(HERO_NICKNAMES)) {
+    const seen = new Set();
+    for (const a of aliases) {
+      const k = a.toLowerCase();
+      if (seen.has(k)) dupes.push(`${id}: ${a}`);
+      seen.add(k);
+    }
+  }
+  assert.deepEqual(dupes, []);
+});
+
+test('a hero may carry many aliases', async () => {
+  // One hero -> many nicknames is the intended design, not an accident.
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+  const nec = HERO_NICKNAMES[36];
+
+  assert.ok(nec.length >= 5, `Necrophos should have several aliases, has ${nec.length}`);
+  for (const alias of nec) {
+    assert.ok(find(alias).includes('Necrophos'), `${alias} -> Necrophos`);
+  }
+  // The same hero is reachable by the official name too.
+  assert.ok(find('瘟疫法师').includes('Necrophos'));
+});
+
+test('aliases stay specific enough to be useful', async () => {
+  // Substring matching makes very short aliases broad, which is fine, but an
+  // alias matching half the roster would be noise rather than a search.
+  const heroes = await readHeroes();
+  const noisy = [];
+  for (const [id, aliases] of Object.entries(HERO_NICKNAMES)) {
+    for (const alias of aliases) {
+      if (alias.length < 2 && !/^\d+$/.test(alias)) continue;
+      const hits = heroes.filter((h) => heroMatchesQuery(h, alias)).length;
+      if (hits > 8) noisy.push(`${alias} -> ${hits} 个英雄`);
+    }
+  }
+  assert.deepEqual(noisy, [], `外号过于宽泛: ${noisy.join(', ')}`);
+});
+
 test('search finds heroes by official Chinese name', async () => {
   const heroes = await readHeroes();
   const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
