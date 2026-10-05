@@ -431,8 +431,65 @@ test('the hero-pool tiles are icons only, with the name kept as a label', () => 
   }
 });
 
-test('tapping a pool hero adds it to OUR team', async () => {
+test('the hero pool can be searched by Chinese name and by nickname', () => {
+  const search = q('search');
+  const poolHeroes = () => q('pool').children.map((c) => c.dataset.hero);
+  // The app listens for 'input' on the search box; drive it the same way a
+  // browser would rather than calling the render function directly.
+  const type = (v) => {
+    search.value = v;
+    search.fire('input', {});
+  };
+
+  type('敌法'); // nickname -> Anti-Mage (hero id 1 in the fixture list)
+  const nick = poolHeroes();
+  assert.ok(nick.length > 0, 'nickname matches something');
+  assert.ok(nick.length < HEROES.length, 'nickname narrows the list');
+
+  type('Alpha'); // English still works
+  assert.equal(poolHeroes().length, 1, 'english name matches exactly one');
+
+  type('zzzzz'); // no match
+  assert.equal(poolHeroes().length, 0, 'no match renders an empty pool');
+
+  type(''); // reset
+  assert.equal(poolHeroes().length, HEROES.length, 'clearing restores every hero');
+});
+
+test('team slots are icon-only and clicking one removes the pick', async () => {
   await resetDraft();
+  clickToggle('enemy'); // resetDraft arms our side; these assertions want enemy
+  tapPoolItem(1);
+  assert.equal(count('enemy'), 1);
+
+  const slot = q('enemySlots').children.find((c) => c.dataset.hero === '1');
+  assert.ok(slot, 'slot exists');
+  assert.deepEqual(slot.children.map((c) => c.tagName), ['IMG'],
+    'no hero name or × button inside the slot');
+  assert.ok((slot._attrs['aria-label'] ?? '').includes('移除'), 'slot announces removal');
+
+  slot.fire('click', {});
+  assert.equal(count('enemy'), 0, 'one click removes the pick');
+});
+
+test('a drag that moves a hero between teams does not also remove it', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(2);
+  const slot = q('enemySlots').children.find((c) => c.dataset.hero === '2');
+  assert.ok(slot);
+
+  dragTo(slot, teamOur);
+  assert.equal(count('our'), 1, 'moved to our team');
+  assert.equal(count('enemy'), 0, 'and no longer on the enemy team');
+
+  // The browser fires a click after the drag; it must not undo the move.
+  slot.fire('click', {});
+  assert.equal(count('our'), 1, 'the post-drag click was swallowed');
+});
+
+test('tapping a pool hero after arming our side adds it to OUR team', async () => {
+  await resetDraft(); // resetDraft arms our side
   tapPoolItem(1);
   assert.equal(count('our'), 1);
   assert.equal(count('enemy'), 0);

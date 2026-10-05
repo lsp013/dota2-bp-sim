@@ -13,6 +13,7 @@ import {
 import { addHero, removeHero, usedHeroes, resolveDrop } from './lib/draft.mjs';
 import { mergeDatasets } from './lib/merge.mjs';
 import { hydrateDataset } from './lib/dataset.mjs';
+import { heroMatchesQuery } from './lib/heroNames.mjs';
 
 const CDN = 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes';
 
@@ -292,21 +293,37 @@ function renderTeams() {
       const h = heroById(id);
       const d = document.createElement('div');
       d.className = 'slot';
+      d.title = `${h.n} · 点击移除`;
+      d.setAttribute('role', 'button');
+      d.setAttribute('aria-label', `移除 ${h.n}`);
+      d.tabIndex = 0;
       makeDraggable(d, id, side);
 
       const img = document.createElement('img');
       img.src = iconUrl(h.name);
-      img.alt = h.n;
+      // Decorative: the slot carries the name in its aria-label.
+      img.alt = '';
       img.loading = 'lazy';
-      const label = document.createElement('span');
-      label.textContent = h.n;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'slot-remove';
-      btn.textContent = '×';
-      btn.setAttribute('aria-label', `移除 ${h.n}`);
-      btn.addEventListener('click', () => removeFrom(side, id));
-      d.append(img, label, btn);
+
+      // A single click on the portrait removes the hero — no need to drag it
+      // out. The drag gesture generates a click on release, so that one is
+      // swallowed first, otherwise moving a hero to the other team would
+      // immediately remove it again.
+      d.addEventListener('click', () => {
+        if (DND.justDragged) {
+          DND.justDragged = false;
+          return;
+        }
+        removeFrom(side, id);
+      });
+      d.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          removeFrom(side, id);
+        }
+      });
+
+      d.append(img);
       el.appendChild(d);
     }
   };
@@ -329,7 +346,7 @@ function renderRecs() {
     enemyPicks: state.enemy,
     weights: state.weights,
     minPairGames: state.minGames,
-    limit: 12,
+    limit: 20,
   });
 
   if (!recs.length) {
@@ -430,10 +447,9 @@ function renderPool() {
   el.innerHTML = '';
 
   const used = usedHeroes(teams());
-  const list = state.data.heroes.filter((h) => {
-    if (!q) return true;
-    return h.n.toLowerCase().includes(q) || h.name.toLowerCase().includes(q);
-  });
+  // Matches English, the internal npc_ name, the official Chinese name and
+  // community nicknames — see src/heroNames.mjs.
+  const list = state.data.heroes.filter((h) => heroMatchesQuery(h, q));
 
   // Colour-code so it is obvious which team a tap lands in.
   el.classList.toggle('side-enemy', state.activeSide === 'enemy');
@@ -608,8 +624,6 @@ function endDrag() {
 
 function onPointerDown(e, heroId, fromSide) {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
-  // Let the × button do its own thing.
-  if (e.target.closest?.('button.slot-remove')) return;
 
   DND.heroId = heroId;
   DND.fromSide = fromSide;

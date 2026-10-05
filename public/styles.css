@@ -101,20 +101,32 @@ select, input[type=search] {
 .team.ours h2 { color: #7ee787; }
 .team.theirs h2 { color: #ffa198; }
 
-.slots { display: flex; flex-wrap: wrap; gap: 8px; min-height: 44px; }
+.slots { display: flex; flex-wrap: wrap; gap: 8px; min-height: 48px; }
+/* Hero name removed: the slot is just the portrait, and clicking it removes the
+   pick, so it reads as one button-like target. */
 .slot {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center;
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 6px 9px; font-size: 13px;
-  cursor: grab;
+  border-radius: 8px; padding: 3px;
+  width: 48px; height: 48px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
 }
-.slot.empty { color: var(--muted); border-style: dashed; }
-.slot img { width: 26px; height: 26px; border-radius: 4px; display: block; }
-.slot button {
-  background: none; border: none; color: var(--muted);
-  cursor: pointer; font-size: 16px; line-height: 1; padding: 0 0 0 2px;
+.slot img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center;
+  border-radius: 6px; display: block;
 }
-.slot button:hover { color: var(--red); }
+.slot:hover, .slot:focus-visible {
+  border-color: var(--red);
+  background: #241a1a;
+  outline: none;
+}
+.slot.empty {
+  color: var(--muted); border-style: dashed;
+  font-size: 11px; cursor: default;
+}
+.slot.empty:hover { border-color: var(--border); background: var(--panel-2); }
 
 /* Which side a tap in the hero pool will fill. */
 .team.active-target { border-color: #3d5a7a; }
@@ -389,7 +401,6 @@ body.dragging {
 }
 body.dragging .pool-item,
 body.dragging .slot { cursor: grabbing; }
-
 /* Follows the pointer. pointer-events:none is essential — otherwise
    elementFromPoint() would hit the ghost instead of the drop zone. */
 .drag-ghost {
