@@ -21,7 +21,14 @@
  * intentionally conservative — only terms in wide use. Add your own freely;
  * the search is a substring match over all of them, so extra entries are
  * harmless.
+ *
+ * PINYIN (searching `difashi` or `dfs`) comes from the generated table in
+ * heroPinyin.mjs, so it stays in step with the official names above.
  */
+
+import { HERO_PINYIN } from './heroPinyin.mjs';
+
+export { HERO_PINYIN };
 
 /** Official Dota 2 Simplified-Chinese client names, keyed by Valve hero id. */
 /**
@@ -330,7 +337,6 @@ export function heroChineseName(hero) {
 
 /** Any CJK character means the query is Chinese, which has no word separators. */
 const HAS_CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
-
 /**
  * Does one alias term satisfy the query?
  *
@@ -357,17 +363,63 @@ function matchesTerm(term, query) {
 }
 
 /**
+ * Pinyin matching, deliberately looser than the Latin rules above.
+ *
+ *  - full pinyin is matched as a SUBSTRING, so typing the tail of a long name
+ *    works: `bingpo` finds 远古冰魄 (`yuangubingpo`), `fashi` finds 敌法师.
+ *  - initials are matched as a PREFIX, which is how abbreviations are typed:
+ *    `df` and `dfs` both find 敌法师 (`dfs`), while `fs` (from the middle) does
+ *    not, so a two-letter query cannot scatter across the roster.
+ *
+ * Full pinyin additionally needs care at two characters. A two-letter Latin
+ * query is normally an abbreviation, and letting it also hit pinyin FRAGMENTS
+ * made 'ta' return Dawnbreaker (nickname 太阳女 = `taiyangnv`) next to Templar
+ * Assassin, and 'np' return Ogre Magi (蓝胖 = `lanpang`) next to Nature's
+ * Prophet — the same scattering the abbreviation fixes were made to remove.
+ *
+ * So a query of two characters matches full pinyin only when it IS the whole
+ * thing (`lu` is the nickname 鹿, but `ta` is not 太阳女), and three or more
+ * characters may match a fragment (`bingpo` inside `yuangubingpo`). Initials
+ * match as a prefix at any length, so `bh`, `df` and `nl` keep working.
+ *
+ * A two-letter query can still legitimately hit several heroes (`bh` is the BH
+ * nickname for 赏金猎人, the initials of 白虎 and the initials of 冰魂). That is
+ * real ambiguity in the input, not a bug, and all of them are shown.
+ *
+ * `query` must already be ASCII and lowercased by the caller.
+ */
+function matchesPinyin(heroId, query) {
+  const py = HERO_PINYIN[heroId];
+  if (!py) return false;
+  if (py.i.some((s) => s.startsWith(query))) return true;
+  if (query.length >= 3) return py.f.some((s) => s.includes(query));
+  return py.f.some((s) => s === query);
+}
+
+/**
+ * Fold a query into the alphabet the pinyin table uses.
+ *
+ * 女 is nǚ and pinyin-pro writes `ü`, which is not on any keyboard: 水晶室女 was
+ * unreachable by pinyin because a query could never contain the character. The
+ * table stores both `v` (the typing convention, e.g. `nv`) and `u`, so folding
+ * an accidentally-pasted ü to `v` is enough to make it match.
+ */
+const foldUmlaut = (s) => s.replace(/ü/g, 'v').replace(/Ü/g, 'v');
+
+/**
  * Everything a hero can be found by: English name, internal name, official
- * Chinese name, and nicknames.
+ * Chinese name, nicknames, and pinyin (full + initials, official and nickname).
  * @param {{id:number, n:string, name:string, zh?:string}} hero
  * @returns {string[]}
  */
 export function heroSearchTerms(hero) {
+  const py = HERO_PINYIN[hero.id];
   return [
     hero.n,
     hero.name,
     heroChineseName(hero),
     ...(HERO_NICKNAMES[hero.id] ?? []),
+    ...(py ? [...py.f, ...py.i] : []),
   ].filter(Boolean);
 }
 
@@ -391,9 +443,15 @@ export function heroMatchesQuery(hero, query) {
 
   if (/[^a-z0-9]/.test(q) && matchesTerm(hero.name, q)) return true;
 
-  return [hero.n, heroChineseName(hero), ...(HERO_NICKNAMES[hero.id] ?? [])]
+  const named = [hero.n, heroChineseName(hero), ...(HERO_NICKNAMES[hero.id] ?? [])]
     .filter(Boolean)
     .some((term) => matchesTerm(term, q));
+  if (named) return true;
+
+  // Pinyin only makes sense for a plain ASCII query, after folding any umlaut.
+  const pyQuery = foldUmlaut(q);
+  if (HAS_CJK.test(q) || !/^[a-z0-9]+$/.test(pyQuery)) return false;
+  return matchesPinyin(hero.id, pyQuery);
 }
 
 /**
@@ -406,4 +464,13 @@ export function heroMatchesQuery(hero, query) {
  */
 export function heroesMissingChineseName(heroes) {
   return (heroes ?? []).filter((h) => !heroChineseName(h));
+}
+
+/**
+ * Heroes with no pinyin entry. Same purpose as above, for pinyin search.
+ * @param {Array<{id:number, n:string}>} heroes
+ * @returns {Array<{id:number, n:string}>}
+ */
+export function heroesMissingPinyin(heroes) {
+  return (heroes ?? []).filter((h) => !HERO_PINYIN[h.id]);
 }

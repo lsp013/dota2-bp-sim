@@ -229,6 +229,15 @@ select, input[type=search] {
 .t-weak { color: var(--red); background: rgba(248, 81, 73, .14); }
 .t-unknown { color: var(--muted); }
 
+/* Keyboard cursor: the tile the arrow keys are on. Needs to read as "this one
+   will be picked by Enter" without competing with the used/target colours. */
+.pool-item.cursor {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+.pool-item.cursor.used { outline-color: var(--yellow); border-color: var(--yellow); }
+
 .rank {
   flex: 0 0 auto; width: 20px; text-align: right;
   color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
@@ -439,6 +448,26 @@ main { padding-bottom: 64px; }
 .ban-empty { color: var(--muted); font-size: 12px; }
 
 /* ---------- drag & drop ---------- */
+
+/* An <img> is natively draggable, and a native image drag CANCELS the pointer
+   event stream — this drag-and-drop is pointer-based, so a gesture beginning on
+   a portrait never completes. Hero-pool tiles are icon-only, which is exactly
+   why the pool could not be dragged at all while a recommendation card could be
+   dragged by its name. JS sets draggable="false" on every portrait; this is the
+   backstop for anything that slips through. */
+img {
+  -webkit-user-drag: none;
+  user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pool-item, .slot, .rec, .drag-ghost {
+  /* Long-pressing an image on iOS otherwise opens the share/save sheet. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 body.dragging {
   user-select: none;
   -webkit-user-select: none;

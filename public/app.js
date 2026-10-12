@@ -22,6 +22,7 @@ import { mergeDatasets } from './lib/merge.mjs';
 import { hydrateDataset } from './lib/dataset.mjs';
 import { heroMatchesQuery } from './lib/heroNames.mjs';
 import { counterVerdict } from './lib/verdict.mjs';
+import { isCursorKey, moveCursor, clampCursor } from './lib/cursor.mjs';
 
 const CDN = 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes';
 
@@ -75,6 +76,12 @@ const state = {
    * conditioned on.
    */
   activeSide: 'enemy',
+  /**
+   * Index of the keyboard cursor inside the currently rendered hero pool, or -1
+   * for none. Driven by the arrow keys while the search box has focus, so a hero
+   * can be picked without touching the mouse.
+   */
+  cursor: -1,
   weights: { counter: 0.7, synergy: 0.2, base: 0.1 },
   minGames: 30,
 };
@@ -84,6 +91,36 @@ const $ = (sel) => document.querySelector(sel);
 const heroById = (id) => state.data.heroes.find((h) => h.id === id);
 const iconUrl = (name) =>
   `${CDN}/${name.replace('npc_dota_hero_', '')}.png`;
+
+/**
+ * Build a hero portrait.
+ *
+ * `draggable = false` is NOT cosmetic — it is a bug fix.
+ *
+ * An <img> is natively draggable in every browser. Pressing one and moving
+ * starts a native HTML5 image drag, and that CANCELS the pointer event stream:
+ * no further pointermove, and no pointerup at all. The drag-and-drop here is
+ * built on pointer events, so a gesture that begins on a portrait never
+ * completes — the drop is never resolved and the hero simply does not move.
+ *
+ * That is exactly why the hero pool always failed (each tile is icon-only, so
+ * every drag starts on an image) while a recommendation card could be dragged by
+ * its NAME but not by its FACE (the name lives in a plain <div>).
+ *
+ * Every portrait goes through here so a new one cannot quietly reintroduce the
+ * bug, and styles.css plus the document-level dragstart guard below are the
+ * backstops for anything that does not.
+ */
+function makeIcon(name, { lazy = true } = {}) {
+  const img = document.createElement('img');
+  img.src = iconUrl(name);
+  // Decorative: the surrounding tile carries the name in its aria-label.
+  img.alt = '';
+  if (lazy) img.loading = 'lazy';
+  img.draggable = false;
+  img.setAttribute('draggable', 'false');
+  return img;
+}
 
 function pct(x) {
   if (x === null || x === undefined || !Number.isFinite(x)) return '—';
@@ -259,20 +296,15 @@ function bindControls() {
     render();
   });
 
-  $('#search').addEventListener('input', renderPool);
-
-  // Enter in the search box acts on the first match, so a hero can be picked
-  // without reaching for the mouse. Because the pool tile is a toggle, pressing
-  // Enter again takes the same hero back — the "反选" behaviour, for free.
-  $('#search').addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    // Let an IME finish first: while composing Chinese, Enter confirms a
-    // candidate and must not also fire a selection.
-    if (e.isComposing || e.keyCode === 229) return;
-    e.preventDefault();
-    const first = $('#pool')?.querySelector('.pool-item');
-    if (first) first.click();
+  $('#search').addEventListener('input', () => {
+    // A new query means a new list, so the box goes back to the first match —
+    // which also makes "type a name, press Enter" pick it.
+    state.cursor = 0;
+    renderPool();
   });
+  // Arrow keys walk a cursor through the pool; Enter picks the hero under it.
+  // Handled here because the search box keeps focus while you type.
+  $('#search').addEventListener('keydown', onPoolKeydown);
 
   // Tap target for the hero pool. Without this there was no touch-friendly way
   // to add an ENEMY hero at all.
@@ -350,11 +382,7 @@ function buildHeroTile(h, side) {
   d.tabIndex = 0;
   makeDraggable(d, h.id, side);
 
-  const img = document.createElement('img');
-  img.src = iconUrl(h.name);
-  // Decorative: the tile carries the name in its aria-label.
-  img.alt = '';
-  img.loading = 'lazy';
+  const img = makeIcon(h.name);
 
   // A single click removes the hero. The drag gesture generates a click on
   // release, so that one is swallowed first — otherwise moving a hero to
@@ -456,10 +484,7 @@ function renderRecs() {
     // Draggable into any panel, exactly like a pool tile.
     makeDraggable(card, r.heroId, null);
 
-    const img = document.createElement('img');
-    img.src = iconUrl(state.data.heroes.find((h) => h.id === r.heroId).name);
-    img.alt = '';
-    img.loading = 'lazy';
+    const img = makeIcon(state.data.heroes.find((h) => h.id === r.heroId).name);
 
     const main = document.createElement('div');
     main.className = 'rec-main';
@@ -564,11 +589,16 @@ function renderPool() {
   el.classList.toggle('side-enemy', state.activeSide === 'enemy');
   el.classList.toggle('side-ban', state.activeSide === 'ban');
 
-  for (const h of list) {
+  // The list may have shrunk since the cursor was placed (a search narrowed it,
+  // or a hero moved), so keep the box inside the new range.
+  state.cursor = clampCursor(state.cursor, list.length);
+
+  list.forEach((h, index) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     const isUsed = used.has(h.id);
     btn.className = 'pool-item' + (isUsed ? ' used' : '');
+    if (index === state.cursor) btn.classList.add('cursor');
     btn.dataset.hero = String(h.id);
     // The tile doubles as a toggle, so the tooltip says what this tap will do.
     btn.title = isUsed
@@ -594,14 +624,56 @@ function renderPool() {
     });
     makeDraggable(btn, h.id, null);
 
-    const img = document.createElement('img');
-    img.src = iconUrl(h.name);
-    // Decorative: the button already carries the name.
-    img.alt = '';
-    img.loading = 'lazy';
+    const img = makeIcon(h.name);
     btn.append(img);
     el.appendChild(btn);
+  });
+
+  // Keep the cursor visible in a long list. Optional-chained because the test
+  // harness has no layout.
+  el.querySelector('.pool-item.cursor')?.scrollIntoView?.({ block: 'nearest' });
+}
+
+/**
+ * How many tiles fit on one row, for Up/Down movement.
+ *
+ * Measured from the layout (tiles sharing the first tile's offset) rather than
+ * hard-coded, since the grid is responsive. If the grid has not been laid out —
+ * a hidden panel, or the test harness — every tile reports the same offset and
+ * the count comes out as the whole list, which is not a row: report 1 so Up/Down
+ * degrade to single steps instead of jumping to the ends.
+ */
+function gridColumns() {
+  const tiles = [...($('#pool')?.querySelectorAll('.pool-item') ?? [])];
+  if (tiles.length < 2) return 1;
+  const top = tiles[0].offsetTop;
+  const inFirstRow = tiles.filter((t) => t.offsetTop === top).length;
+  return inFirstRow >= tiles.length ? 1 : inFirstRow;
+}
+
+/** Move the pool cursor, or select the hero under it. */
+function onPoolKeydown(e) {
+  const tiles = [...($('#pool')?.querySelectorAll('.pool-item') ?? [])];
+  const total = tiles.length;
+
+  if (isCursorKey(e.key)) {
+    e.preventDefault();
+    const next = moveCursor(state.cursor, total, e.key, { columns: gridColumns() });
+    if (next === state.cursor) return;
+    state.cursor = next;
+    renderPool();
+    return;
   }
+
+  if (e.key !== 'Enter') return;
+  // Let an IME finish first: while composing Chinese, Enter confirms a candidate
+  // and must not also fire a selection.
+  if (e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  // The cursor wins; without one (fresh search) act on the first match, which
+  // keeps "type a name, press Enter" working.
+  const target = tiles[state.cursor] ?? tiles[0];
+  if (target) target.click();
 }
 
 /* ------------------------------------------------------------------ */
@@ -730,9 +802,7 @@ function startDrag(x, y) {
 
   const g = document.createElement('div');
   g.className = 'drag-ghost';
-  const img = document.createElement('img');
-  img.src = iconUrl(h.name);
-  img.alt = '';
+  const img = makeIcon(h.name, { lazy: false });
   const span = document.createElement('span');
   span.textContent = h.n;
   g.append(img, span);
@@ -891,6 +961,26 @@ function installDragAndDrop() {
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', onPointerCancel);
 
+  // Block the browser's own image dragging outright.
+  //
+  // An <img> is natively draggable, and starting a native image drag CANCELS the
+  // pointer event stream: no further pointermove and no pointerup at all. Since
+  // this drag-and-drop runs on pointer events, a gesture that begins on a
+  // portrait simply never completes — the drop is never resolved. Hero-pool tiles
+  // are icon-only, so the pool could not be dragged at all, while a
+  // recommendation card worked when grabbed by its name (a plain <div>) and
+  // failed when grabbed by the portrait.
+  //
+  // Nothing inside a drag surface should ever start a native drag, so those are
+  // covered as well — the catch-all for a portrait rendered without
+  // draggable="false".
+  document.addEventListener('dragstart', (e) => {
+    const el = e.target;
+    if (el?.tagName === 'IMG' || el?.closest?.('img, .pool-item, .slot, .rec')) {
+      e.preventDefault();
+    }
+  });
+
   // Non-passive so a touch drag can suppress page scrolling once it starts.
   document.addEventListener(
     'touchmove',
@@ -952,7 +1042,7 @@ function openDetail(heroId) {
           ? `<span class="tag ${v.cls}">${v.label}</span>`
           : `<span class="tag t-${row.t}">${row.t === 'high' ? '可靠' : row.t === 'medium' ? '参考' : '样本少'}</span>`;
         return `<tr>
-          <td><span class="who"><img src="${iconUrl(o.name)}" alt="" loading="lazy">${o.n}</span></td>
+          <td><span class="who"><img src="${iconUrl(o.name)}" alt="" loading="lazy" draggable="false">${o.n}</span></td>
           <td class="num">${pct(row.p)}</td>
           <td class="num">${row.g}${thin}</td>
           <td class="num">${last}</td>
@@ -979,7 +1069,7 @@ function openDetail(heroId) {
 
   $('#detailBody').innerHTML = `
     <div class="detail-head">
-      <img src="${iconUrl(h.name)}" alt="">
+      <img src="${iconUrl(h.name)}" alt="" draggable="false">
       <div>
         <h3>${h.n}</h3>
         <p>${h.roles.join(' · ')} · ${h.atk} · ${h.attr.toUpperCase()}</p>

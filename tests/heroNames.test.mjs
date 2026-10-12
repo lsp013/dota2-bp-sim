@@ -4,10 +4,12 @@ import { readFile } from 'node:fs/promises';
 import {
   HERO_ZH,
   HERO_NICKNAMES,
+  HERO_PINYIN,
   heroSearchTerms,
   heroMatchesQuery,
   heroChineseName,
   heroesMissingChineseName,
+  heroesMissingPinyin,
 } from '../src/heroNames.mjs';
 
 const readHeroes = async () =>
@@ -141,6 +143,153 @@ test('aliases stay specific enough to be useful', async () => {
     }
   }
   assert.deepEqual(noisy, [], `外号过于宽泛: ${noisy.join(', ')}`);
+});
+
+/* ---------------- pinyin ---------------- */
+
+test('EVERY hero has pinyin, so a new hero fails here', async () => {
+  // Same purpose as the Chinese-name coverage test: pinyin search must not go
+  // quietly missing for one hero.
+  const heroes = await readHeroes();
+  const missing = heroesMissingPinyin(heroes);
+  assert.deepEqual(
+    missing.map((h) => h.n),
+    [],
+    `缺拼音，请重跑 node scripts/gen-pinyin.mjs：${missing.map((h) => h.n).join(', ')}`
+  );
+});
+
+test('heroes can be found by full pinyin', async () => {
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+
+  assert.deepEqual(find('difashi'), ['Anti-Mage']);
+  assert.deepEqual(find('yuangubingpo'), ['Ancient Apparition']);
+  assert.deepEqual(find('fengxingzhe'), ['Windranger']);
+  assert.deepEqual(find('wenyifashi'), ['Necrophos']);
+});
+
+test('heroes can be found by pinyin initials', async () => {
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+
+  assert.deepEqual(find('dfs'), ['Anti-Mage'], '敌法师');
+  assert.deepEqual(find('ygbp'), ['Ancient Apparition'], '远古冰魄');
+  assert.deepEqual(find('fxz'), ['Windranger'], '风行者');
+  assert.deepEqual(find('qybl'), ['Muerta'], '琼英碧灵');
+});
+
+test('pinyin search is case-insensitive, including UPPERCASE initials', async () => {
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+
+  for (const q of ['DFS', 'DfS', 'dfs', 'dFs']) {
+    assert.deepEqual(find(q), ['Anti-Mage'], `${q} should find Anti-Mage`);
+  }
+  for (const q of ['DIFASHI', 'Difashi']) {
+    assert.deepEqual(find(q), ['Anti-Mage'], `${q} should find Anti-Mage`);
+  }
+});
+
+test('a prefix of the initials already narrows the list', async () => {
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+  assert.ok(find('df').includes('Anti-Mage'), "'df' is a prefix of 'dfs'");
+});
+
+test('the pinyin TAIL matches, which is the point of substring matching', async () => {
+  // 远古冰魄 = yuangubingpo; typing just the memorable part should find it.
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+  assert.deepEqual(find('bingpo'), ['Ancient Apparition']);
+  assert.ok(find('fashi').includes('Necrophos'), '瘟疫法师 = wenyifashi');
+});
+
+test('initials from the MIDDLE do not match, keeping short queries specific', async () => {
+  // 'fs' sits inside 敌法师's initials 'dfs' but is not a prefix. Substring
+  // matching here would let two-letter queries scatter across the roster — the
+  // same failure mode as 'ta' hitting 'dota' and 'np' hitting 'npc'.
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+  assert.ok(!find('fs').includes('Anti-Mage'), "'fs' must not find 敌法师");
+});
+
+test('adding pinyin did not loosen the English abbreviations', async () => {
+  // These were the original two-letter regressions; pinyin must not undo them.
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+
+  assert.deepEqual(find('ta'), ['Templar Assassin']);
+  assert.deepEqual(find('np'), ["Nature's Prophet"]);
+  assert.deepEqual(find('qop'), ['Queen of Pain']);
+  assert.ok(find('nec').includes('Necrophos'));
+});
+
+test('a pinyin hit can coexist with a nickname hit (real ambiguity is shown)', async () => {
+  // 'bh' is the BH nickname for 赏金猎人 AND the initials of 冰魂 (binghun).
+  // Showing both is correct: the input genuinely is ambiguous.
+  const heroes = await readHeroes();
+  const hits = heroes.filter((h) => heroMatchesQuery(h, 'bh')).map((h) => h.n);
+  assert.ok(hits.includes('Bounty Hunter'), 'BH nickname');
+  assert.ok(hits.includes('Ancient Apparition'), '冰魂 initials');
+  assert.ok(hits.length <= 4, `should stay a short list, got ${hits.join(', ')}`);
+});
+
+test('pinyin never interferes with a Chinese query', async () => {
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+  assert.deepEqual(find('剑圣'), ['Juggernaut']);
+  assert.deepEqual(find('敌法师'), ['Anti-Mage']);
+});
+
+test('every pinyin entry is searchable for its own hero', async () => {
+  // Catches a table entry that can never match: 水晶室女 was stored as
+  // `shuijingshinü`, and the un-folded ü made it unreachable by pinyin.
+  const heroes = await readHeroes();
+  const problems = [];
+  for (const [id, { f, i }] of Object.entries(HERO_PINYIN)) {
+    const hero = heroes.find((h) => h.id === Number(id));
+    if (!hero) continue;
+    for (const term of [...f, ...i]) {
+      if (!heroMatchesQuery(hero, term)) problems.push(`${hero.n}: 拼音「${term}」匹配不到自己`);
+    }
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('the pinyin table is pure ASCII', () => {
+  // Non-ASCII pinyin (ü) cannot be typed, so it can never match a query.
+  const bad = [];
+  for (const [id, { f, i }] of Object.entries(HERO_PINYIN)) {
+    for (const term of [...f, ...i]) {
+      if (!/^[a-z0-9]+$/.test(term)) bad.push(`${id}: ${term}`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test('女 heroes are reachable with either spelling of the umlaut', async () => {
+  // 水晶室女 = shuǐ jīng shì nǚ. `nv` is the convention, `nu` is what people
+  // also type, and a pasted ü is folded to v.
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+
+  assert.deepEqual(find('shuijingshinv'), ['Crystal Maiden']);
+  assert.deepEqual(find('shuijingshinu'), ['Crystal Maiden']);
+  assert.deepEqual(find('shuijingshinü'), ['Crystal Maiden'], 'a pasted ü still works');
+  assert.deepEqual(find('sjsn'), ['Crystal Maiden']);
+});
+
+test('Chinese nicknames are searchable by pinyin too', async () => {
+  // Players say 冰魂 / 奶绿 far more often than the official 远古冰魄 / 琼英碧灵.
+  const heroes = await readHeroes();
+  const find = (q) => heroes.filter((h) => heroMatchesQuery(h, q)).map((h) => h.n);
+
+  assert.ok(find('binghun').includes('Ancient Apparition'), '冰魂 = binghun');
+  assert.ok(find('bh').includes('Ancient Apparition'), '冰魂 initials = bh');
+  assert.ok(find('nailv').includes('Muerta'), '奶绿 = nailv');
+  assert.ok(find('nl').includes('Muerta'), '奶绿 initials = nl');
+  assert.ok(find('xiaogou').includes('Lifestealer'), '小狗 = xiaogou');
 });
 
 test('search finds heroes by official Chinese name', async () => {

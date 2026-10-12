@@ -23,6 +23,12 @@ const registry = [];
 const byId = new Map();
 
 function matchesSimple(el, part) {
+  // Selector LISTS ('img, .slot') are valid CSS and valid in closest() and
+  // querySelector(). The stub used to reject them, which silently made any
+  // multi-selector lookup match nothing at all.
+  if (part.includes(',')) {
+    return part.split(',').some((one) => matchesSimple(el, one.trim()));
+  }
   const m = part.match(
     /^([a-zA-Z]+)?((?:[.#][\w-]+|\[[^\]]+\])*)$/
   );
@@ -228,14 +234,25 @@ function fireWindow(type, ev) {
 
 let elementFromPointResult = null;
 
+const docListeners = {};
 const documentStub = {
   body: new El('body'),
   createElement: (tag) => new El(tag),
   querySelector: (sel) => findAll(sel)[0] ?? null,
   querySelectorAll: (sel) => findAll(sel),
-  addEventListener() {},
+  // Document-level listeners used to be dropped on the floor, so the app's
+  // dragstart guard and touchmove handler could not be tested at all.
+  addEventListener(type, fn) {
+    (docListeners[type] ||= []).push(fn);
+  },
   elementFromPoint: () => elementFromPointResult,
 };
+
+function fireDocument(type, ev = {}) {
+  for (const fn of docListeners[type] ?? []) {
+    fn({ target: null, cancelable: true, preventDefault() {}, ...ev });
+  }
+}
 
 /* Pre-register every element app.js looks up. */
 const IDS = [
@@ -699,6 +716,216 @@ test('a plain tap still uses the armed button', async () => {
   el.fire('click', {});
 
   assert.equal(banCount(), 1, 'a tap with small drift still bans');
+});
+
+/* ---------------- native image dragging ---------------- */
+
+test('REGRESSION: every portrait opts out of the browser\'s native image drag', async () => {
+  // An <img> is natively draggable, and a native image drag cancels the pointer
+  // event stream, so a drag that starts on a portrait never completes. Hero-pool
+  // tiles are icon-only — which is why the pool could not be dragged at all —
+  // and a recommendation card worked by its name but not by its face.
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1); // produce a slot, a ban tile and a recommendation card
+
+  const imgs = [];
+  const collect = (el) => {
+    for (const child of el.children ?? []) {
+      if (child.tagName === 'IMG') imgs.push(child);
+      collect(child);
+    }
+  };
+  collect(q('pool'));
+  collect(q('recs'));
+  collect(q('enemySlots'));
+  collect(q('ourSlots'));
+  collect(q('banSlots'));
+
+  assert.ok(imgs.length > 0, 'portraits were rendered');
+  const bad = imgs.filter((i) => i._attrs.draggable !== 'false');
+  assert.equal(bad.length, 0, `${bad.length}/${imgs.length} portraits are still natively draggable`);
+});
+
+test('REGRESSION: a dragstart on a portrait is prevented', () => {
+  let prevented = false;
+  const img = new El('img');
+  fireDocument('dragstart', {
+    target: img,
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true, 'the browser must not be allowed to drag the image');
+});
+
+test('a dragstart from anywhere inside a drag surface is prevented', () => {
+  // e.g. a future tile that wraps its portrait in a span with some text: the
+  // browser would offer the nearest draggable ancestor, so the whole surface is
+  // covered rather than just IMG targets.
+  let prevented = false;
+  const tile = new El('div');
+  tile.className = 'pool-item';
+  const inner = new El('span');
+  tile.append(inner);
+
+  fireDocument('dragstart', {
+    target: inner,
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true, 'a native drag must not start from inside a tile');
+});
+
+test('a dragstart on ordinary content is left alone', () => {
+  // The guard must not become a blanket ban on text selection or other drags.
+  let prevented = false;
+  const div = new El('div');
+  fireDocument('dragstart', {
+    target: div,
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, false);
+});
+
+/* ---------------- keyboard cursor ---------------- */
+
+const cursorHero = () => {
+  const tile = q('pool').children.find((c) => c._classes.has('cursor'));
+  return tile ? Number(tile.dataset.hero) : null;
+};
+const clsCount = (cls) =>
+  q('pool').children.filter((c) => c._classes.has(cls)).length;
+const pressKey = (key, extra = {}) => q('search').fire('keydown', { key, preventDefault() {}, ...extra });
+
+test('the cursor appears on the first match as soon as you search', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = 'Alpha';
+  search.fire('input', {});
+
+  assert.equal(q('pool').children.length, 1);
+  assert.equal(cursorHero(), 1, 'the single match is under the cursor');
+  assert.equal(clsCount('cursor'), 1, 'exactly one cursor box');
+});
+
+test('the arrow keys walk the cursor through the pool', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = ''; // whole roster
+  search.fire('input', {});
+  assert.equal(cursorHero(), Number(q('pool').children[0].dataset.hero));
+
+  const first = cursorHero();
+  pressKey('ArrowRight');
+  const second = cursorHero();
+  assert.notEqual(second, first, 'moved off the first tile');
+  assert.equal(second, Number(q('pool').children[1].dataset.hero));
+
+  pressKey('ArrowLeft');
+  assert.equal(cursorHero(), first, 'and back again');
+});
+
+test('the cursor is clamped at the edges instead of wrapping', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = '';
+  search.fire('input', {});
+
+  const ids = q('pool').children.map((c) => Number(c.dataset.hero));
+  const last = ids[ids.length - 1];
+
+  pressKey('ArrowLeft'); // already at index 0
+  assert.equal(cursorHero(), ids[0], 'stays on the first tile');
+
+  for (let i = 0; i < ids.length + 5; i++) pressKey('ArrowRight');
+  assert.equal(cursorHero(), last, 'stops on the last tile rather than wrapping');
+});
+
+test('Up and Down move within the grid', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = '';
+  search.fire('input', {});
+
+  // The harness has no layout, so gridColumns() falls back to 1 and Up/Down
+  // degrade to single steps rather than jumping to the ends.
+  const ids = q('pool').children.map((c) => Number(c.dataset.hero));
+  pressKey('ArrowDown');
+  assert.equal(cursorHero(), ids[1]);
+  pressKey('ArrowUp');
+  assert.equal(cursorHero(), ids[0]);
+});
+
+test('Enter picks the hero under the cursor, not the first match', async () => {
+  await resetDraft(); // arms our side
+  const search = q('search');
+  search.value = '';
+  search.fire('input', {});
+
+  pressKey('ArrowRight');
+  pressKey('ArrowRight');
+  const target = cursorHero();
+  assert.ok(target !== null);
+
+  pressKey('Enter');
+  assert.equal(count('our'), 1, 'exactly one hero added');
+  const added = q('ourSlots').children.find((c) => c.dataset.hero === String(target));
+  assert.ok(added, `the hero under the cursor (#${target}) was added`);
+});
+
+test('Enter still works with no cursor movement (typing a name)', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = 'Alpha';
+  search.fire('input', {});
+  pressKey('Enter');
+  assert.equal(count('our'), 1, 'the first match was added');
+});
+
+test('pressing Enter twice takes the same hero back', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = 'Alpha';
+  search.fire('input', {});
+
+  pressKey('Enter');
+  assert.equal(count('our'), 1);
+  pressKey('Enter');
+  assert.equal(count('our'), 0, 'the tile is a toggle, so Enter reverses it');
+});
+
+test('arrow keys do not scroll the page', async () => {
+  // preventDefault is called for arrows; without it the browser scrolls the list
+  // out from under the cursor.
+  await resetDraft();
+  const search = q('search');
+  search.value = '';
+  search.fire('input', {});
+
+  for (const key of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+    let prevented = false;
+    q('search').fire('keydown', { key, preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, true, `${key} should be prevented`);
+  }
+});
+
+test('the cursor survives a render triggered by selecting a hero', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = '';
+  search.fire('input', {});
+
+  pressKey('ArrowRight');
+  pressKey('ArrowRight');
+  pressKey('ArrowRight');
+  const target = cursorHero();
+
+  pressKey('Enter'); // selecting re-renders the pool
+  assert.equal(cursorHero(), target, 'the box stays where it was');
 });
 
 /* ---------------- ban bucket ---------------- */
