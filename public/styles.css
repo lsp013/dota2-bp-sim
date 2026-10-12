@@ -446,6 +446,19 @@ body.dragging {
 }
 body.dragging .pool-item,
 body.dragging .slot { cursor: grabbing; }
+
+/* While a drag is in flight, mark EVERY panel that accepts a drop. The
+   destination is wherever the hero is released, not the armed button, and this
+   makes that visible instead of leaving the user to guess. */
+body.drag-active [data-drop="our"],
+body.drag-active [data-drop="enemy"],
+body.drag-active [data-drop="ban"] {
+  border-color: #3d5a7a;
+  border-style: dashed;
+}
+body.drag-active [data-drop="our"].drop-hover { border-color: var(--green); border-style: solid; }
+body.drag-active [data-drop="enemy"].drop-hover { border-color: var(--red); border-style: solid; }
+body.drag-active [data-drop="ban"].drop-hover { border-color: #a4322c; border-style: solid; }
 /* Follows the pointer. pointer-events:none is essential — otherwise
    elementFromPoint() would hit the ghost instead of the drop zone. */
 .drag-ghost {

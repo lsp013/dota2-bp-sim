@@ -673,13 +673,23 @@ const DND = {
   pressTimer: null,
   startX: 0,
   startY: 0,
+  /** Page offset when the gesture began, so a scroll can be told from a drag. */
+  startScrollY: 0,
   ghost: null,
   hover: null,
   justDragged: false,
 };
 
-const HOLD_MS = 180;
+const HOLD_MS = 150;
 const MOVE_TOLERANCE = 8;
+/**
+ * A release that travelled further than this counts as a DROP even when the
+ * visual drag never armed — a fast touch drag outruns the long-press.
+ *
+ * Deliberately well above MOVE_TOLERANCE: a finger drifts 10-15px during an
+ * ordinary tap, and swallowing those taps would be its own bug.
+ */
+const LAZY_DROP_PX = 24;
 
 function dropZoneAt(x, y) {
   const el = document.elementFromPoint(x, y);
@@ -714,6 +724,9 @@ function startDrag(x, y) {
 
   DND.active = true;
   document.body.classList.add('dragging');
+  // Marks EVERY panel that accepts a drop, so the destination is visibly the
+  // panel under the finger rather than whichever button happens to be armed.
+  document.body.classList.add('drag-active');
 
   const g = document.createElement('div');
   g.className = 'drag-ghost';
@@ -740,6 +753,18 @@ function endDrag() {
   DND.ghost = null;
   DND.active = false;
   document.body.classList.remove('dragging');
+  document.body.classList.remove('drag-active');
+}
+
+/**
+ * Swallow the click the browser fires after this gesture, so a gesture that was
+ * already handled as a drop (or as a scroll) is not also handled as a tap.
+ */
+function swallowNextClick() {
+  DND.justDragged = true;
+  setTimeout(() => {
+    DND.justDragged = false;
+  }, 60);
 }
 
 function onPointerDown(e, heroId, fromSide) {
@@ -751,6 +776,7 @@ function onPointerDown(e, heroId, fromSide) {
   DND.pointerType = e.pointerType;
   DND.startX = e.clientX;
   DND.startY = e.clientY;
+  DND.startScrollY = window.scrollY ?? 0;
   DND.moved = false;
 
   clearTimeout(DND.pressTimer);
@@ -783,12 +809,21 @@ function onPointerMove(e) {
       startDrag(DND.startX, DND.startY);
       if (!DND.active) return; // startDrag bailed (unknown hero)
     } else {
-      // Touch moved before the hold completed: this is a scroll, not a drag.
+      // Touch moved before the hold completed — which is ALSO what a fast,
+      // deliberate drag looks like, not only a scroll.
+      //
+      // This used to throw the gesture away (pointerId = null), and the release
+      // then fell through to the click handler, which files the hero under the
+      // ARMED BUTTON rather than the panel it was dropped on. That is why drags
+      // appeared to be limited by the 加入我方/ban位/加入敌方 buttons — and why
+      // EVERY touch drag that moved before the hold failed, not just fast ones.
+      //
+      // The gesture is now kept alive so onPointerUp can resolve the drop from
+      // where the finger actually landed. It simply gets no floating ghost, and
+      // the page is left free to scroll (no preventDefault) since this may still
+      // turn out to be a scroll.
       clearTimeout(DND.pressTimer);
       DND.pressTimer = null;
-      DND.pointerId = null;
-      DND.heroId = null;
-      DND.fromSide = null;
       return;
     }
   }
@@ -802,13 +837,20 @@ function onPointerMove(e) {
 function onPointerUp(e) {
   if (e.pointerId !== DND.pointerId) return;
 
-  // A long-press arms the drag, but if the finger never actually travelled the
-  // user meant a tap (or changed their mind). Only a real move counts as a
-  // drag, otherwise the click below would be swallowed and the tap lost.
-  const realDrag = DND.active && DND.moved;
   const heroId = DND.heroId;
   const fromSide = DND.fromSide;
-  const zone = realDrag ? dropZoneAt(e.clientX, e.clientY) : null;
+  const dist = Math.hypot(e.clientX - DND.startX, e.clientY - DND.startY);
+  const scrolled = (window.scrollY ?? 0) !== DND.startScrollY;
+
+  // Two ways a gesture can be a drop:
+  //   - the long-press armed a visible drag, or
+  //   - it travelled far enough that it was clearly a drag, even though the
+  //     finger outran the hold timer.
+  // A plain tap is neither, and stays with the click listener.
+  const armedDrag = DND.active && DND.moved;
+  const lazyDrop = !armedDrag && dist > LAZY_DROP_PX && !scrolled;
+  const isDrop = armedDrag || lazyDrop;
+  const zone = isDrop ? dropZoneAt(e.clientX, e.clientY) : null;
 
   endDrag();
   DND.pointerId = null;
@@ -816,16 +858,18 @@ function onPointerUp(e) {
   DND.fromSide = null;
   DND.moved = false;
 
-  if (!realDrag) return; // plain tap — handled by the click listener
+  if (!isDrop) {
+    // A gesture that scrolled the page must not also count as a tap; otherwise
+    // flicking the hero list could silently add whatever was under the finger.
+    if (scrolled) swallowNextClick();
+    return;
+  }
 
   // Swallow the click that follows a drag so it doesn't double-add.
-  DND.justDragged = true;
-  setTimeout(() => {
-    DND.justDragged = false;
-  }, 60);
+  swallowNextClick();
 
   // The decision itself lives in src/draft.mjs so it is unit-testable.
-  const action = resolveDrop({ active: realDrag, zone, fromSide });
+  const action = resolveDrop({ active: true, zone, fromSide });
   if (action.type === 'add') {
     addTo(action.side, heroId);
   } else if (action.type === 'remove') {

@@ -214,6 +214,8 @@ class El {
 
 const winListeners = {};
 const windowStub = {
+  /** The app reads this to tell a scroll from a drag. */
+  scrollY: 0,
   addEventListener(type, fn) {
     (winListeners[type] ||= []).push(fn);
   },
@@ -440,6 +442,32 @@ function dragTo(el, zone, pointerType = 'mouse') {
   elementFromPointResult = null;
 }
 
+/**
+ * A FAST touch drag: the finger travels before the long-press hold completes, so
+ * the visual drag never arms. This is what a normal-speed finger drag looks
+ * like, and it is the case that used to be discarded — leaving the release to
+ * the click handler, which files the hero under the armed button.
+ */
+function fastDragTo(el, zone, { pointerType = 'touch', distance = 60 } = {}) {
+  elementFromPointResult = zone;
+  const opts = { pointerId: 9, pointerType, button: 0, clientX: 0, clientY: 0 };
+  el.fire('pointerdown', opts);
+  fireWindow('pointermove', { ...opts, clientX: distance, clientY: distance });
+  fireWindow('pointerup', { ...opts, clientX: distance, clientY: distance });
+  elementFromPointResult = null;
+}
+
+/** A scroll: the finger moves AND the page offset changes. */
+function scrollGesture(el, { pointerType = 'touch' } = {}) {
+  elementFromPointResult = null;
+  const opts = { pointerId: 11, pointerType, button: 0, clientX: 0, clientY: 0 };
+  el.fire('pointerdown', opts);
+  windowStub.scrollY = 120; // the page moved
+  fireWindow('pointermove', { ...opts, clientX: 0, clientY: -60 });
+  fireWindow('pointerup', { ...opts, clientX: 0, clientY: -60 });
+  windowStub.scrollY = 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* tests                                                               */
 /* ------------------------------------------------------------------ */
@@ -537,6 +565,140 @@ test('tapping a pool hero after arming our side adds it to OUR team', async () =
   tapPoolItem(1);
   assert.equal(count('our'), 1);
   assert.equal(count('enemy'), 0);
+});
+
+/* ---------------- drags ignore the armed button ---------------- */
+
+const THREE_ZONES = [
+  ['our', () => count('our')],
+  ['enemy', () => count('enemy')],
+  ['ban', () => banCount()],
+];
+
+test('REGRESSION: a fast touch drag lands in the released zone, not the armed one', async () => {
+  // A finger drag normally outruns the long-press hold. The gesture used to be
+  // discarded, so the release fell through to the click handler and the hero was
+  // filed under whichever button was armed — the reported bug.
+  const all = ['our', 'enemy', 'ban'];
+  const elFor = (zone) => q(zone === 'ban' ? 'banPanel' : zone === 'our' ? 'teamOur' : 'teamEnemy');
+
+  for (const [zone, tally] of THREE_ZONES) {
+    await resetDraft();
+    // Arm a bucket OTHER than the drop target, so a fall-through would be visible.
+    const armed = all.find((z) => z !== zone);
+    clickToggle(armed);
+
+    fastDragTo(poolItem(2), elFor(zone));
+
+    assert.equal(tally(), 1, `fast touch drag must land in ${zone}`);
+    for (const [other, otherTally] of THREE_ZONES) {
+      if (other !== zone) assert.equal(otherTally(), 0, `nothing leaked into ${other}`);
+    }
+  }
+});
+
+test('the long-press path still works: hold, then drag', async () => {
+  // Distinguishes the two touch routes. Here the finger stays put long enough for
+  // the hold to arm a visible drag, THEN travels — the original interaction,
+  // which must keep working alongside the new fast-drag fallback.
+  await resetDraft();
+  clickToggle('enemy');
+  elementFromPointResult = q('banPanel');
+  const opts = { pointerId: 13, pointerType: 'touch', button: 0, clientX: 0, clientY: 0 };
+  poolItem(3).fire('pointerdown', opts);
+  await settle(); // let HOLD_MS elapse so the drag arms and a ghost appears
+  fireWindow('pointermove', { ...opts, clientX: 40, clientY: 40 });
+  fireWindow('pointerup', { ...opts, clientX: 40, clientY: 40 });
+  elementFromPointResult = null;
+
+  assert.equal(banCount(), 1, 'dropped on the ban panel');
+  assert.equal(count('enemy'), 0, 'not in the armed bucket');
+});
+
+test('every source can be dragged into every zone, whatever is armed', async () => {
+  // The 3x3 the user asked for: no combination may depend on the button.
+  const zones = [
+    ['our', () => count('our'), () => q('teamOur')],
+    ['enemy', () => count('enemy'), () => q('teamEnemy')],
+    ['ban', () => banCount(), () => q('banPanel')],
+  ];
+
+  for (const [armed] of zones) {
+    for (const [target, tally, targetEl] of zones) {
+      if (target === armed) continue; // keep armed !== target to prove independence
+      await resetDraft();
+      clickToggle(armed);
+
+      const source = poolItem(4);
+      assert.ok(source, 'pool item exists');
+      dragTo(source, targetEl());
+      assert.equal(tally(), 1, `pool -> ${target} while ${armed} armed`);
+
+      // Now drag it straight on to a third zone, from its slot.
+      const [, , thirdEl] = zones.find(([z]) => z !== target && z !== armed);
+      const third = zones.find(([z]) => z !== target && z !== armed)[0];
+      const from =
+        target === 'our' ? slotFor(4, 'our')
+          : target === 'enemy' ? slotFor(4, 'enemy')
+            : q('banSlots').children[0];
+      assert.ok(from, `slot in ${target} exists`);
+      dragTo(from, thirdEl());
+      assert.equal(
+        zones.find(([z]) => z === third)[1](),
+        1,
+        `${target} -> ${third}`
+      );
+      assert.equal(tally(), 0, `${target} is now empty`);
+    }
+  }
+});
+
+test('a recommendation card drags into any zone too', async () => {
+  const all = ['our', 'enemy', 'ban'];
+  const elFor = (zone) => q(zone === 'ban' ? 'banPanel' : zone === 'our' ? 'teamOur' : 'teamEnemy');
+
+  for (const [zone, tally] of THREE_ZONES) {
+    await resetDraft();
+    clickToggle('enemy');
+    tapPoolItem(1); // give the engine a pick to rank against
+    clickToggle(all.find((z) => z !== zone)); // arm something else
+
+    const before = tally(); // enemy already holds hero 1, so compare against this
+    const card = firstRec();
+    assert.ok(card, `a card is rendered for zone ${zone}`);
+    const heroId = Number(card.dataset.hero);
+
+    dragTo(card, elFor(zone));
+
+    assert.equal(tally(), before + 1, `rec card -> ${zone}`);
+    assert.ok(!recHeroIds().includes(heroId), 'and it leaves the list');
+  }
+});
+
+test('a gesture that scrolls the page is not treated as a drop or a tap', async () => {
+  await resetDraft();
+  clickToggle('our');
+  // Release over the ban panel, but the page scrolled on the way there.
+  elementFromPointResult = q('banPanel');
+  scrollGesture(poolItem(5), {});
+  elementFromPointResult = null;
+
+  assert.equal(banCount(), 0, 'a scroll must not ban');
+  assert.equal(count('our'), 0, 'and must not fall back to the armed bucket');
+});
+
+test('a plain tap still uses the armed button', async () => {
+  // The lazy-drop rule must not swallow ordinary taps: finger drift during a tap
+  // is normal and must keep working.
+  await resetDraft();
+  clickToggle('ban');
+  const el = poolItem(6);
+  el.fire('pointerdown', { pointerId: 21, pointerType: 'touch', button: 0, clientX: 0, clientY: 0 });
+  fireWindow('pointermove', { pointerId: 21, pointerType: 'touch', clientX: 6, clientY: 4 }); // < threshold
+  fireWindow('pointerup', { pointerId: 21, pointerType: 'touch', clientX: 6, clientY: 4 });
+  el.fire('click', {});
+
+  assert.equal(banCount(), 1, 'a tap with small drift still bans');
 });
 
 /* ---------------- ban bucket ---------------- */
