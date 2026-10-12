@@ -59,6 +59,31 @@ function descendants(root, out = []) {
   return out;
 }
 
+/**
+ * Find elements WITHIN a subtree, the way Element.querySelector does.
+ *
+ * The global findAll() below walks every element ever created, because the
+ * fixture's top-level nodes are never attached to document.body. Using it for
+ * element-scoped lookups made #pool.querySelector('.pool-item') return a stale
+ * tile after the pool had been filtered down to nothing — which is exactly the
+ * "Enter with no matches" case, so it has to be subtree-scoped to be faithful.
+ */
+function findAllWithin(root, sel) {
+  const parts = sel.trim().split(/\s+/);
+  let pool = descendants(root);
+  for (let i = 0; i < parts.length; i++) {
+    const matched = pool.filter((el) => matchesSimple(el, parts[i]));
+    if (i < parts.length - 1) {
+      const set = new Set();
+      for (const m of matched) for (const d of descendants(m)) set.add(d);
+      pool = [...set];
+    } else {
+      pool = matched;
+    }
+  }
+  return pool;
+}
+
 function findAll(sel) {
   const parts = sel.trim().split(/\s+/);
   let pool = registry.slice();
@@ -153,10 +178,10 @@ class El {
     }
   }
   querySelector(sel) {
-    return findAll(sel)[0] ?? null;
+    return findAllWithin(this, sel)[0] ?? null;
   }
   querySelectorAll(sel) {
-    return findAll(sel);
+    return findAllWithin(this, sel);
   }
   closest(sel) {
     let n = this;
@@ -176,6 +201,14 @@ class El {
       ...ev,
     };
     for (const fn of this._listeners[type] ?? []) fn(event);
+  }
+
+  /**
+   * Mirrors HTMLElement.click(), which the app uses for "press Enter = click the
+   * first match". Without it the harness diverges from a real browser.
+   */
+  click() {
+    this.fire('click', {});
   }
 }
 
@@ -360,6 +393,14 @@ const settle = () => new Promise((r) => setTimeout(r, 70));
 /** Clear the draft so each test starts from a known state. */
 async function resetDraft() {
   q('resetBtn').fire('click', {});
+  // The search box is view state that the app's reset deliberately leaves alone
+  // (it resets the draft, not the filters), but text left in it would filter the
+  // pool for every later test. Clear it here.
+  const search = q('search');
+  if (search.value) {
+    search.value = '';
+    search.fire('input', {});
+  }
   clickToggle('our');
   await settle();
 }
@@ -501,6 +542,145 @@ test('tapping a pool hero after arming our side adds it to OUR team', async () =
 /* ---------------- ban bucket ---------------- */
 
 const banCount = () => Number(q('banCount').textContent);
+const recHeroIds = () => q('recs').children.map((c) => Number(c.dataset.hero)).filter(Boolean);
+const firstRec = () => q('recs').children[0];
+
+/* ---------------- Enter key in the search box ---------------- */
+
+const pressEnter = (extra = {}) => q('search').fire('keydown', { key: 'Enter', ...extra });
+
+test('Enter picks the first match, and Enter again takes it back', async () => {
+  await resetDraft(); // arms our side
+  const search = q('search');
+  search.value = 'Alpha'; // exactly one hero in the fixture (id 1)
+  search.fire('input', {});
+  assert.equal(q('pool').children.length, 1, 'one match');
+
+  pressEnter();
+  assert.equal(count('our'), 1, 'Enter added the first match');
+
+  pressEnter();
+  assert.equal(count('our'), 0, 'Enter again toggled it back off');
+});
+
+test('Enter with no matches does nothing', async () => {
+  await resetDraft();
+  const search = q('search');
+  search.value = 'zzzzz';
+  search.fire('input', {});
+  assert.equal(q('pool').children.length, 0);
+  pressEnter();
+  assert.equal(count('our'), 0);
+  assert.equal(count('enemy'), 0);
+  assert.equal(banCount(), 0);
+});
+
+test('Enter while an IME is composing does not select', async () => {
+  // Typing Chinese: Enter confirms a candidate. Selecting a hero at the same
+  // moment would be maddening.
+  await resetDraft();
+  const search = q('search');
+  search.value = 'Alpha';
+  search.fire('input', {});
+
+  pressEnter({ isComposing: true });
+  assert.equal(count('our'), 0, 'composing Enter ignored');
+
+  pressEnter({ keyCode: 229 }); // the other IME signal browsers send
+  assert.equal(count('our'), 0, 'keyCode 229 ignored');
+
+  pressEnter();
+  assert.equal(count('our'), 1, 'a real Enter still works');
+});
+
+test('Enter honours the armed bucket', async () => {
+  await resetDraft();
+  clickToggle('ban');
+  const search = q('search');
+  search.value = 'Alpha';
+  search.fire('input', {});
+  pressEnter();
+  assert.equal(banCount(), 1, 'Enter banned the hero because ban位 was armed');
+  assert.equal(count('our'), 0);
+});
+
+/* ---------------- recommendation cards ---------------- */
+
+test('clicking a recommendation adds it to the armed bucket', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1); // give the engine an enemy to rank against
+  clickToggle('our');
+
+  const card = firstRec();
+  assert.ok(card, 'a card is rendered');
+  const heroId = Number(card.dataset.hero);
+
+  card.fire('click', {});
+  assert.equal(count('our'), 1, 'added to our team');
+  assert.ok(!recHeroIds().includes(heroId), 'and it leaves the recommendation list');
+});
+
+test('clicking a recommendation honours the armed bucket', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1);
+  clickToggle('ban');
+
+  const heroId = Number(firstRec().dataset.hero);
+  firstRec().fire('click', {});
+  assert.equal(banCount(), 1, 'banned via the card');
+  assert.ok(!recHeroIds().includes(heroId), 'banned hero dropped from the list');
+});
+
+test('dragging a recommendation onto a panel files it there', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1);
+  clickToggle('our');
+
+  const card = firstRec();
+  const heroId = Number(card.dataset.hero);
+  dragTo(card, teamOur);
+
+  assert.equal(count('our'), 1, 'drag added it to our team');
+  assert.ok(!recHeroIds().includes(heroId));
+});
+
+test('the info button opens the evidence sheet instead of selecting the hero', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1);
+  clickToggle('our');
+
+  const card = firstRec();
+  const info = card.children.find((c) => c._classes.has('rec-info'));
+  assert.ok(info, 'card has an info button');
+
+  info.fire('click', { stopPropagation() {} });
+  assert.equal(q('detail').hidden, false, 'sheet opened');
+  assert.equal(count('our'), 0, 'and the hero was NOT added');
+});
+
+test('the detail sheet rates enemy matchups as 克制 / 非常克制 / 不克制', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1); // enemy = hero 1, so every candidate has a matchup against it
+  clickToggle('our');
+
+  const card = firstRec();
+  assert.ok(card);
+  const info = card.children.find((c) => c._classes.has('rec-info'));
+  info.fire('click', { stopPropagation() {} });
+
+  const html = q('detailBody').innerHTML;
+  assert.match(html, /对阵敌方已选/, 'enemy table present');
+  assert.match(html, /克制程度/, 'column labelled as a verdict');
+  assert.match(html, /非常克制|克制|不克制/, `a verdict tag is shown:\n${html.slice(0, 800)}`);
+
+  const enemySection = html.split('对阵敌方已选')[1]?.split('与队友的对位记录')[0] ?? '';
+  assert.ok(!/可靠/.test(enemySection), 'old confidence label gone from the enemy table');
+});
 
 test('the side toggle offers ban位 between the two teams', () => {
   const sides = byId.get('sideToggle').children.map((b) => b.dataset.side);
@@ -521,7 +701,6 @@ test('with ban位 armed, a tap bans instead of picking', async () => {
   assert.deepEqual(tile.children.map((c) => c.tagName), ['IMG']);
 });
 
-const recHeroIds = () => q('recs').children.map((c) => Number(c.dataset.hero)).filter(Boolean);
 
 test('a banned hero disappears from the recommendations', async () => {
   // This is the entire point of a ban, so assert the engine's OUTPUT rather

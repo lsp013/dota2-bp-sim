@@ -21,6 +21,7 @@ import {
 import { mergeDatasets } from './lib/merge.mjs';
 import { hydrateDataset } from './lib/dataset.mjs';
 import { heroMatchesQuery } from './lib/heroNames.mjs';
+import { counterVerdict } from './lib/verdict.mjs';
 
 const CDN = 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes';
 
@@ -40,6 +41,9 @@ const SOURCE_LABELS = {
   stratz: 'STRATZ',
   both: 'OpenDota + STRATZ',
 };
+
+/** Display name for each bucket a hero can be filed into. */
+const SIDE_LABEL = { our: '我方', enemy: '敌方', ban: 'ban位' };
 
 const state = {
   /** The dataset currently feeding the engine. */
@@ -257,6 +261,19 @@ function bindControls() {
 
   $('#search').addEventListener('input', renderPool);
 
+  // Enter in the search box acts on the first match, so a hero can be picked
+  // without reaching for the mouse. Because the pool tile is a toggle, pressing
+  // Enter again takes the same hero back — the "反选" behaviour, for free.
+  $('#search').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    // Let an IME finish first: while composing Chinese, Enter confirms a
+    // candidate and must not also fire a selection.
+    if (e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    const first = $('#pool')?.querySelector('.pool-item');
+    if (first) first.click();
+  });
+
   // Tap target for the hero pool. Without this there was no touch-friendly way
   // to add an ENEMY hero at all.
   $('#sideToggle').addEventListener('click', (e) => {
@@ -409,16 +426,39 @@ function renderRecs() {
   const max = recs[0].total || 1;
 
   recs.forEach((r, i) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'rec';
+    // A div rather than a <button>: the card now contains its own "why" button,
+    // and a button inside a button is invalid HTML.
+    const card = document.createElement('div');
+    card.className = 'rec';
+    card.setAttribute('role', 'button');
+    card.tabIndex = 0;
     // Lets the ban logic be asserted from the DOM rather than inferred.
-    btn.dataset.hero = String(r.heroId);
-    btn.addEventListener('click', () => openDetail(r.heroId));
+    card.dataset.hero = String(r.heroId);
+    card.title = `${r.name} · 加入${SIDE_LABEL[state.activeSide] ?? ''}`;
+
+    // Left click adds the hero to the armed bucket, same as a pool tile. Every
+    // card here is by definition unassigned (the engine excludes picks and bans)
+    // so a click always means "add" — no toggle needed.
+    const add = () => addTo(state.activeSide, r.heroId);
+    card.addEventListener('click', () => {
+      if (DND.justDragged) {
+        DND.justDragged = false;
+        return;
+      }
+      add();
+    });
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        add();
+      }
+    });
+    // Draggable into any panel, exactly like a pool tile.
+    makeDraggable(card, r.heroId, null);
 
     const img = document.createElement('img');
     img.src = iconUrl(state.data.heroes.find((h) => h.id === r.heroId).name);
-    img.alt = r.name;
+    img.alt = '';
     img.loading = 'lazy';
 
     const main = document.createElement('div');
@@ -468,8 +508,23 @@ function renderRecs() {
     rank.className = 'rank';
     rank.textContent = `#${i + 1}`;
 
-    btn.append(rank, img, main, score);
-    el.appendChild(btn);
+    // The evidence sheet moved behind this button, since clicking the card now
+    // selects the hero.
+    const info = document.createElement('button');
+    info.type = 'button';
+    info.className = 'rec-info';
+    info.textContent = 'ⓘ';
+    info.title = `${r.name} · 查看对位依据`;
+    info.setAttribute('aria-label', `查看 ${r.name} 的对位依据`);
+    info.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openDetail(r.heroId);
+    });
+    // A press on ⓘ must not start a drag of the card.
+    info.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+    card.append(rank, img, main, score, info);
+    el.appendChild(card);
   });
 }
 
@@ -508,8 +563,6 @@ function renderPool() {
   // Colour-code so it is obvious which bucket a tap lands in.
   el.classList.toggle('side-enemy', state.activeSide === 'enemy');
   el.classList.toggle('side-ban', state.activeSide === 'ban');
-
-  const SIDE_LABEL = { our: '我方', enemy: '敌方', ban: 'ban位' };
 
   for (const h of list) {
     const btn = document.createElement('button');
@@ -831,24 +884,42 @@ function openDetail(heroId) {
     .map((id) => ({ id, row: lookupPair(m, heroId, id) }))
     .filter((x) => x.row);
 
-  const tbl = (rows, title) => {
+  /**
+   * One matchup table.
+   *
+   * `verdict` switches the last column between two different questions:
+   *   - against an ENEMY: "does this hero beat them?"  -> 克制 / 非常克制 / 不克制
+   *   - against a TEAMMATE: there is nothing to counter, so the confidence tag
+   *     (可靠 / 参考 / 样本少) stays, which is what that column used to show.
+   *
+   * Sample size keeps its own column either way. Folding it into the verdict
+   * would hide exactly the distinction this project cares most about — a
+   * 40-game 65% and a 5000-game 65% are not the same evidence.
+   */
+  const tbl = (rows, title, { verdict = false } = {}) => {
     if (!rows.length) return `<p class="empty-note">${title}：无可比对位数据。</p>`;
     const body = rows
       .sort((a, b) => b.row.p - a.row.p)
       .map(({ id, row }) => {
         const o = heroById(id);
+        const v = counterVerdict(row.p);
+        const thin = row.g < 30 ? ' <span class="tag t-low">样本少</span>' : '';
+        const last = verdict
+          ? `<span class="tag ${v.cls}">${v.label}</span>`
+          : `<span class="tag t-${row.t}">${row.t === 'high' ? '可靠' : row.t === 'medium' ? '参考' : '样本少'}</span>`;
         return `<tr>
           <td><span class="who"><img src="${iconUrl(o.name)}" alt="" loading="lazy">${o.n}</span></td>
           <td class="num">${pct(row.p)}</td>
-          <td class="num">${row.g}</td>
-          <td class="num"><span class="tag t-${row.t}">${row.t === 'high' ? '可靠' : row.t === 'medium' ? '参考' : '样本少'}</span></td>
+          <td class="num">${row.g}${thin}</td>
+          <td class="num">${last}</td>
         </tr>`;
       })
       .join('');
+    const head = verdict ? '克制程度' : '数据可信度';
     return `<h4 style="margin:14px 0 6px;font-size:13px">${title}</h4>
       <table class="mu">
         <thead><tr><th>英雄</th><th style="text-align:right">胜率</th>
-        <th style="text-align:right">场次</th><th></th></tr></thead>
+        <th style="text-align:right">场次</th><th style="text-align:right">${head}</th></tr></thead>
         <tbody>${body}</tbody>
       </table>`;
   };
@@ -884,7 +955,7 @@ function openDetail(heroId) {
       </div>
     </div>
 
-    ${tbl(vsEnemy, '对阵敌方已选')}
+    ${tbl(vsEnemy, '对阵敌方已选', { verdict: true })}
     ${tbl(vsAlly, '与队友的对位记录')}
 
     <div class="note">
