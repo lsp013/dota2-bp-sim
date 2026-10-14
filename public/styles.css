@@ -48,6 +48,27 @@ body {
 }
 .meta-btn:active { background: var(--border); }
 
+/* GitHub star link. Cannot star on the user's behalf — a static site has no
+   OAuth — so it opens the repo, where the real Star button lives. */
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.star-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--panel-2); color: var(--text); text-decoration: none;
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 5px 12px; font-size: 13px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.star-btn:hover, .star-btn:focus-visible {
+  border-color: var(--yellow); outline: none;
+}
+.star-btn:active { background: var(--border); }
+.star-icon { color: var(--yellow); font-size: 14px; line-height: 1; }
+.star-count {
+  color: var(--muted); font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border-left: 1px solid var(--border); padding-left: 6px;
+}
+
 .meta-panel {
   padding: 12px 14px; margin: 0;
   background: var(--panel-2); border-bottom: 1px solid var(--border);

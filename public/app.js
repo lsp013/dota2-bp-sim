@@ -43,6 +43,86 @@ const SOURCE_LABELS = {
   both: 'OpenDota + STRATZ',
 };
 
+/* ------------------------------------------------------------------ */
+/* GitHub star button                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The star button is a plain LINK. A static site cannot star a repo on someone's
+ * behalf — that needs OAuth and a server — so it opens the repository, where the
+ * real Star button is. The count is the only dynamic part, and it is entirely
+ * optional: if the request fails the button still works.
+ */
+const REPO_URL = 'https://github.com/lsp013/dota2-bp-sim';
+const REPO_API = 'https://api.github.com/repos/lsp013/dota2-bp-sim';
+const STAR_CACHE_KEY = 'dota2bp:stars';
+/** An hour. GitHub's unauthenticated API allows 60 requests per hour per IP. */
+const STAR_TTL_MS = 60 * 60 * 1000;
+
+/** Compact star count: 999 -> "999", 1234 -> "1.2k", 24680 -> "25k". */
+export function formatStars(n) {
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  const rounded = k >= 10 ? Math.round(k) : Number(k.toFixed(1));
+  return `${rounded}k`;
+}
+
+/** localStorage may be missing (tests) or throw (private mode, quota). */
+function readStarCache() {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(STAR_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Number.isFinite(parsed.n) || typeof parsed.at !== 'number') return null;
+    if (Date.now() - parsed.at > STAR_TTL_MS) return null;
+    return parsed.n;
+  } catch {
+    return null;
+  }
+}
+
+function writeStarCache(n) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STAR_CACHE_KEY, JSON.stringify({ n, at: Date.now() }));
+  } catch {
+    /* not worth reporting; the count is decorative */
+  }
+}
+
+function paintStarCount(n) {
+  const el = $('#starCount');
+  // A brand-new repo shows "0", which reads worse than showing nothing, so the
+  // chip only appears once there is a number worth showing.
+  if (!Number.isFinite(n) || n < 1) return;
+  const text = formatStars(n);
+  if (!el || !text) return;
+  el.textContent = text;
+  el.hidden = false;
+}
+
+/** Best-effort star count. Never throws: a failure leaves the link alone. */
+export async function showStarCount() {
+  const cached = readStarCache();
+  if (cached !== null) {
+    paintStarCount(cached);
+    return;
+  }
+  try {
+    const res = await fetch(REPO_API, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!res.ok) return; // rate limited, offline, or the repo is private
+    const data = await res.json();
+    const n = data?.stargazers_count;
+    if (!Number.isFinite(n)) return;
+    writeStarCache(n);
+    paintStarCount(n);
+  } catch {
+    /* the button is a link; the count is a bonus */
+  }
+}
+
 /** Display name for each bucket a hero can be filed into. */
 const SIDE_LABEL = { our: '我方', enemy: '敌方', ban: 'ban位' };
 
@@ -221,6 +301,8 @@ async function boot() {
   updateSourceButtons();
   updateSideButtons();
   render();
+  // Fire and forget: the star link works whether or not this resolves.
+  showStarCount();
 }
 
 /* ------------------------------------------------------------------ */

@@ -12,7 +12,18 @@
 <body>
 <header class="topbar">
   <h1>Dota 2 <span>BP 模拟器</span></h1>
-  <button id="metaBtn" class="meta-btn" type="button" aria-label="数据信息">数据</button>
+  <div class="topbar-actions">
+    <a
+      id="starBtn"
+      class="star-btn"
+      href="https://github.com/lsp013/dota2-bp-sim"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="觉得有用的话，去 GitHub 点个 Star ⭐"
+      aria-label="在 GitHub 上给这个项目点 Star"
+    ><span class="star-icon" aria-hidden="true">★</span><span class="star-label">Star</span><span id="starCount" class="star-count" hidden></span></a>
+    <button id="metaBtn" class="meta-btn" type="button" aria-label="数据信息">数据</button>
+  </div>
 </header>
 
 <div id="metaPanel" class="meta-panel" hidden></div>

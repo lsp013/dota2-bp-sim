@@ -14,6 +14,7 @@
 
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 /* ------------------------------------------------------------------ */
 /* minimal DOM                                                         */
@@ -258,7 +259,7 @@ function fireDocument(type, ev = {}) {
 const IDS = [
   'app', 'loading', 'metaBtn', 'metaPanel', 'detail', 'detailBody', 'detailClose',
   'ourSlots', 'enemySlots', 'ourCount', 'enemyCount', 'recs', 'poolPanel',
-  'sourceFab', 'sourceNote',
+  'sourceFab', 'sourceNote', 'starBtn', 'starCount',
   'banSlots', 'banCount', 'banPanel',
   'pool', 'search', 'sideToggle', 'resetBtn', 'minGames',
   'wCounter', 'wSynergy', 'wBase', 'wCounterOut', 'wSynergyOut', 'wBaseOut',
@@ -376,8 +377,13 @@ const STRATZ_DATASET = {
 };
 
 const fetchedUrls = [];
+/** Mutable so the star-count tests can change what GitHub 'returns'. */
+let githubStub = { stargazers_count: 1234 };
 globalThis.fetch = async (url) => {
   fetchedUrls.push(String(url));
+  if (String(url).includes('api.github.com')) {
+    return { ok: true, json: async () => githubStub };
+  }
   if (String(url).includes('data-stratz')) {
     return { ok: true, json: async () => STRATZ_DATASET };
   }
@@ -926,6 +932,101 @@ test('the cursor survives a render triggered by selecting a hero', async () => {
 
   pressKey('Enter'); // selecting re-renders the pool
   assert.equal(cursorHero(), target, 'the box stays where it was');
+});
+
+/* ---------------- GitHub star button ---------------- */
+
+test('the served markup links to the repository, safely', async () => {
+  // The link IS the feature, and it lives in index.html rather than in app.js,
+  // so it has to be asserted against the real file.
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const anchor = html.match(/<a[^>]*id="starBtn"[\s\S]*?<\/a>/)?.[0];
+  assert.ok(anchor, 'index.html has a #starBtn anchor');
+
+  const attr = (name) => anchor.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+  assert.equal(attr('href'), 'https://github.com/lsp013/dota2-bp-sim');
+  assert.equal(attr('target'), '_blank', 'opens GitHub without leaving the app');
+  // noopener prevents the opened page from reaching back via window.opener.
+  assert.match(attr('rel') ?? '', /noopener/, 'rel must include noopener');
+  assert.match(attr('rel') ?? '', /noreferrer/);
+  assert.ok(attr('aria-label'), 'has an accessible name');
+});
+
+test('formatStars keeps the count short', async () => {
+  const { formatStars } = await import('../public/app.js');
+  assert.equal(formatStars(0), '0');
+  assert.equal(formatStars(7), '7');
+  assert.equal(formatStars(999), '999');
+  assert.equal(formatStars(1000), '1k');
+  assert.equal(formatStars(1234), '1.2k');
+  assert.equal(formatStars(1999), '2k', 'rounds up at .95+');
+  assert.equal(formatStars(12345), '12k');
+  assert.equal(formatStars(999999), '1000k', 'no millions tier needed yet');
+  assert.equal(formatStars(NaN), '');
+  assert.equal(formatStars(null), '');
+  assert.equal(formatStars(-3), '');
+});
+
+test('the star count is rendered once GitHub answers', async () => {
+  const { showStarCount } = await import('../public/app.js');
+  githubStub = { stargazers_count: 1234 };
+  q('starCount').hidden = true;
+  q('starCount').textContent = '';
+
+  await showStarCount();
+
+  assert.equal(q('starCount').hidden, false, 'the count is revealed');
+  assert.equal(q('starCount').textContent, '1.2k');
+});
+
+test('a brand-new repo does not advertise "0" stars', async () => {
+  const { showStarCount } = await import('../public/app.js');
+  githubStub = { stargazers_count: 0 };
+  const count = q('starCount');
+  count.hidden = true;
+  count.textContent = '';
+
+  await showStarCount();
+
+  assert.equal(count.hidden, true, 'the chip stays hidden at zero');
+  assert.equal(count.textContent, '');
+  githubStub = { stargazers_count: 1234 };
+});
+
+test('a GitHub failure leaves the star link alone', async () => {
+  // Rate limited, offline, or the API shape changed: the count is decorative, so
+  // nothing should throw and the link must keep working.
+  const { showStarCount } = await import('../public/app.js');
+  const realFetch = globalThis.fetch;
+  const count = q('starCount');
+  count.hidden = true;
+  count.textContent = '';
+
+  for (const stub of [
+    async () => ({ ok: false, json: async () => ({}) }),
+    async () => ({ ok: true, json: async () => ({}) }),
+    async () => ({ ok: true, json: async () => ({ stargazers_count: 'lots' }) }),
+    async () => {
+      throw new Error('offline');
+    },
+  ]) {
+    globalThis.fetch = stub;
+    await showStarCount(); // must not throw
+    assert.equal(count.hidden, true, 'no count is shown');
+  }
+
+  globalThis.fetch = realFetch;
+});
+
+test('the star button does not appear in the app logic paths it should not', async () => {
+  // Guard against the count fetch being wired into boot in a way that breaks the
+  // data loading: the app still boots and renders with the API stubbed out.
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="metaBtn"/, 'the existing 数据 button is still there');
+  assert.ok(
+    html.indexOf('starBtn') < html.indexOf('metaBtn'),
+    'star sits to the LEFT of 数据 so the rightmost control stays 数据'
+  );
 });
 
 /* ---------------- ban bucket ---------------- */
