@@ -32,17 +32,12 @@
 
 <main id="app" hidden>
   <section class="controls">
-    <div class="weight-row">
-      <label>克制 <output id="wCounterOut">70%</output>
-        <input type="range" id="wCounter" min="0" max="100" value="70">
-      </label>
-      <label>协同 <output id="wSynergyOut">20%</output>
-        <input type="range" id="wSynergy" min="0" max="100" value="20">
-      </label>
-      <label>版本强度 <output id="wBaseOut">10%</output>
-        <input type="range" id="wBase" min="0" max="100" value="10">
-      </label>
+    <div class="mode-row" id="modeRow" role="group" aria-label="推荐模式">
+      <button type="button" data-mode="winrate" aria-pressed="false">优先胜率</button>
+      <button type="button" data-mode="counter" class="active" aria-pressed="true">优先克制</button>
+      <button type="button" data-mode="synergy" aria-pressed="false">优先配合</button>
     </div>
+    <p class="hint" id="modeHint"></p>
     <div class="weight-row">
       <label class="min-games">最小样本
         <select id="minGames">
@@ -51,7 +46,7 @@
           <option value="100">100 场</option>
         </select>
       </label>
-      <button id="resetBtn" class="btn danger" type="button">重置 BP</button>
+      <button id="resetBtn" class="btn danger" type="button" title="清空我方和敌方，ban 位保留">重置 BP</button>
     </div>
   </section>
 

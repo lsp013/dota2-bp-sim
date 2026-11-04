@@ -37,9 +37,10 @@
  */
 
 import { isRankable } from './wilson.mjs';
+import { counterVerdict } from './verdict.mjs';
 
 /**
- * Default term weights. Adjustable in the UI.
+ * Default term weights. Also the 优先克制 preset.
  *
  * Counter evidence dominates deliberately. This tool exists to answer "what do
  * I pick into THEIR draft", so the specific matchup is the point; a hero's
@@ -57,6 +58,53 @@ export const DEFAULT_WEIGHTS = {
   synergy: 0.2,
   base: 0.1,
 };
+
+/**
+ * The three recommendation modes offered in the UI.
+ *
+ * They differ in more than weights, which is the point: 优先克制
+ * (`counterFirst`) changes the ORDER, not just the blend.
+ *
+ * Why an ordering rule instead of another set of weights: the UI already labels
+ * every enemy matchup 非常克制 / 克制 / 不克制 by its win rate, so a ranking that
+ * puts a hero with a 不克制 matchup above one without it contradicts the very
+ * labels shown on the card. A player sorting for counters wants the heroes that
+ * beat what they are facing to actually come first.
+ */
+export const MODES = {
+  winrate: {
+    label: '优先胜率',
+    // Version win rate leads; the matchup and synergy terms only break ties
+    // between heroes the patch already considers equally strong.
+    weights: { counter: 0.2, synergy: 0.1, base: 0.7 },
+    counterFirst: false,
+    hint: '按当前版本的整体胜率排，克制与配合只做微调',
+  },
+  counter: {
+    label: '优先克制',
+    weights: DEFAULT_WEIGHTS,
+    counterFirst: true,
+    hint: '先列「非常克制」多的，再列「克制」多的，有「不克制」的排最后',
+  },
+  synergy: {
+    label: '优先配合',
+    // Our own picks lead, for picking around a drafted core rather than into the
+    // enemy team.
+    weights: { counter: 0.2, synergy: 0.7, base: 0.1 },
+    counterFirst: false,
+    hint: '按与己方已选英雄的搭配排，克制做次要参考',
+  },
+};
+
+/**
+ * Mode keys in display order. Declared separately from Object.keys(MODES)
+ * because a test pins the two together: a mode added to MODES without a button
+ * (or a button without a mode) then fails loudly instead of silently vanishing
+ * from the UI.
+ */
+export const MODE_KEYS = ['winrate', 'counter', 'synergy'];
+
+export const DEFAULT_MODE = 'counter';
 
 /** Minimum games before a matchup pair may influence a score. */
 export const MIN_PAIR_GAMES = 30;
@@ -188,6 +236,59 @@ export function vsSet(matchups, heroId, ids, minGames = MIN_PAIR_GAMES) {
 }
 
 /**
+ * Count the per-enemy counter verdicts for one candidate.
+ *
+ * Uses the same bands the UI shows (see verdict.mjs), so the ordering rule and
+ * the labels on the card can never disagree about what "不克制" means.
+ *
+ * @param {Array<{p:number}>} threats rows from threatBreakdown (already filtered
+ *   to samples worth trusting)
+ * @returns {{strong:number, mild:number, weak:number, covered:number}}
+ */
+export function verdictTally(threats) {
+  const tally = { strong: 0, mild: 0, weak: 0, covered: 0 };
+  for (const row of threats ?? []) {
+    const { key } = counterVerdict(row?.p);
+    if (key === 'unknown') continue;
+    tally[key] += 1;
+    tally.covered += 1;
+  }
+  return tally;
+}
+
+/**
+ * Ordering for 优先克制.
+ *
+ * Lexicographic, deliberately — a hero that loses to something the enemy has
+ * cannot outrank one that does not, no matter how good its blended score is:
+ *
+ *   1. heroes with no evidence at all sink to the bottom (they cannot be judged)
+ *   2. heroes with any 不克制 matchup go behind every hero without one
+ *   3. more 非常克制 first
+ *   4. then more 克制
+ *   5. then the blended score
+ *
+ * @param {object} a
+ * @param {object} b
+ */
+function counterFirstCompare(a, b) {
+  const ta = a.counterTally;
+  const tb = b.counterTally;
+
+  const noEvidenceA = ta.covered === 0;
+  const noEvidenceB = tb.covered === 0;
+  if (noEvidenceA !== noEvidenceB) return noEvidenceA ? 1 : -1;
+
+  const hasWeakA = ta.weak > 0;
+  const hasWeakB = tb.weak > 0;
+  if (hasWeakA !== hasWeakB) return hasWeakA ? 1 : -1;
+
+  if (ta.strong !== tb.strong) return tb.strong - ta.strong;
+  if (ta.mild !== tb.mild) return tb.mild - ta.mild;
+  return b.total - a.total;
+}
+
+/**
  * Score every candidate hero given the draft state.
  *
  * @param {object} dataset  parsed data.json
@@ -195,7 +296,9 @@ export function vsSet(matchups, heroId, ids, minGames = MIN_PAIR_GAMES) {
  * @param {number[]} opts.ourPicks    hero ids already on our team
  * @param {number[]} opts.enemyPicks  hero ids already on the enemy team
  * @param {number[]} opts.banned      hero ids unavailable
- * @param {object}   [opts.weights]
+ * @param {'counter'|'winrate'|'synergy'} [opts.mode]  preset to use
+ * @param {object}   [opts.weights]   explicit blend; overrides the mode
+ * @param {boolean}  [opts.counterFirst] override the mode's ordering rule
  * @param {number}   [opts.minPairGames]
  * @param {number}   [opts.limit]
  * @returns {Array<object>} ranked recommendations with full breakdown
@@ -205,10 +308,17 @@ export function recommend(dataset, opts = {}) {
     ourPicks = [],
     enemyPicks = [],
     banned = [],
-    weights = DEFAULT_WEIGHTS,
     minPairGames = MIN_PAIR_GAMES,
     limit = 12,
   } = opts;
+
+  const mode = opts.mode ?? DEFAULT_MODE;
+  const preset = MODES[mode] ?? MODES[DEFAULT_MODE];
+  // An explicit `weights` object means the caller is tuning the blend directly,
+  // so the mode's ordering rule is switched off unless it is asked for
+  // explicitly — passing weights should not silently also change the sort.
+  const weights = opts.weights ?? preset.weights;
+  const counterFirst = opts.counterFirst ?? (!opts.weights && preset.counterFirst);
 
   const { matchups, heroes } = dataset;
   const unavailable = new Set([...ourPicks, ...enemyPicks, ...banned]);
@@ -268,6 +378,7 @@ export function recommend(dataset, opts = {}) {
 
     const total = wUsed > 0 ? acc / (wUsed / wSum) : 0;
 
+    const threats = threatBreakdown(matchups, hero.id, enemyPicks, minPairGames);
     scored.push({
       heroId: hero.id,
       name: hero.n,
@@ -281,11 +392,13 @@ export function recommend(dataset, opts = {}) {
       synergy,
       base,
       /** Which enemies this hero is notably strong/weak into. */
-      threats: threatBreakdown(matchups, hero.id, enemyPicks, minPairGames),
+      threats,
+      /** 非常克制 / 克制 / 不克制 counts, for the counter-first ordering. */
+      counterTally: verdictTally(threats),
     });
   }
 
-  scored.sort((a, b) => b.total - a.total);
+  scored.sort(counterFirst ? counterFirstCompare : (a, b) => b.total - a.total);
   return scored.slice(0, limit);
 }
 

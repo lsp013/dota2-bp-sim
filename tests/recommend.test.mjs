@@ -6,7 +6,11 @@ import {
   vsSet,
   recommend,
   shrink,
+  verdictTally,
   DEFAULT_WEIGHTS,
+  DEFAULT_MODE,
+  MODES,
+  MODE_KEYS,
   MIN_PAIR_GAMES,
   PRIOR_GAMES,
 } from '../src/recommend.mjs';
@@ -62,6 +66,170 @@ test('vsSet pools only the opponents with enough games', () => {
   assert.ok(Math.abs(res.raw - 0.6) < 1e-9, 'raw pooled rate');
   assert.ok(res.value < 0.6 && res.value > 0.5, `shrunk toward 0.5, got ${res.value}`);
 });
+
+/* ---------------- ranking modes (m02045) ---------------- */
+
+test('verdictTally counts the bands the UI shows', () => {
+  const tally = verdictTally([
+    { p: 0.60 }, // 非常克制
+    { p: 0.55 }, // 非常克制
+    { p: 0.51 }, // 克制
+    { p: 0.40 }, // 不克制
+  ]);
+  assert.deepEqual(tally, { strong: 2, mild: 1, weak: 1, covered: 4 });
+  assert.deepEqual(verdictTally([]), { strong: 0, mild: 0, weak: 0, covered: 0 });
+});
+
+/** Enemies E1/E2 plus four candidates whose verdict mix differs per hero. */
+function counterFixture() {
+  const hero = (id, n) => ({ id, n, attr: 'agi', atk: 'Melee', roles: [] });
+  return {
+    meta: {},
+    heroes: [
+      hero(10, 'E1'),
+      hero(11, 'E2'),
+      hero(20, 'A'), // strong vs E1, weak vs E2
+      hero(21, 'B'), // mildly ahead of both
+      hero(22, 'C'), // strongly ahead of both
+      hero(23, 'D'), // behind both
+    ],
+    matchups: {
+      20: {
+        10: { g: 1000, w: 600, p: 0.6, lb: 0.57, ub: 0.63, t: 'high' },
+        11: { g: 1000, w: 450, p: 0.45, lb: 0.42, ub: 0.48, t: 'high' },
+      },
+      21: {
+        10: { g: 1000, w: 510, p: 0.51, lb: 0.48, ub: 0.54, t: 'high' },
+        11: { g: 1000, w: 510, p: 0.51, lb: 0.48, ub: 0.54, t: 'high' },
+      },
+      22: {
+        10: { g: 1000, w: 550, p: 0.55, lb: 0.52, ub: 0.58, t: 'high' },
+        11: { g: 1000, w: 550, p: 0.55, lb: 0.52, ub: 0.58, t: 'high' },
+      },
+      23: {
+        10: { g: 1000, w: 440, p: 0.44, lb: 0.41, ub: 0.47, t: 'high' },
+        11: { g: 1000, w: 430, p: 0.43, lb: 0.40, ub: 0.46, t: 'high' },
+      },
+    },
+  };
+}
+
+test('优先克制 orders by verdict, not by blended score', () => {
+  const ds = counterFixture();
+  const out = recommend(ds, { enemyPicks: [10, 11], limit: 10 });
+  const order = out.map((x) => x.name);
+  // C: 非常克制 x2, no 不克制.  B: 克制 x2, no 不克制.
+  // A: has a 不克制, so it cannot sit above B no matter how good its score is.
+  // D: 不克制 x2, last.
+  assert.deepEqual(order, ['C', 'B', 'A', 'D']);
+});
+
+test('the counter-first rule actually changes the order (it has teeth)', () => {
+  const ds = counterFixture();
+  // A's blended score is higher than B's (it wins big against one enemy), so a
+  // plain weighted sort puts A second. 优先克制 demotes it behind B because it
+  // loses to the other enemy — that is the whole point of the mode.
+  const weighted = recommend(ds, {
+    enemyPicks: [10, 11],
+    weights: { counter: 1, synergy: 0, base: 0 },
+    limit: 10,
+  }).map((x) => x.name);
+  assert.deepEqual(weighted, ['C', 'A', 'B', 'D']);
+
+  const counterFirst = recommend(ds, {
+    enemyPicks: [10, 11],
+    weights: { counter: 1, synergy: 0, base: 0 },
+    counterFirst: true,
+    limit: 10,
+  }).map((x) => x.name);
+  assert.deepEqual(counterFirst, ['C', 'B', 'A', 'D']);
+});
+
+test('a hero with no matchup evidence sinks below measured heroes', () => {
+  const ds = counterFixture();
+  // `recommend` drops heroes with no usable data at all, so to reach the
+  // "no enemy evidence" branch the hero needs a measurable ally pairing.
+  ds.heroes.push({ id: 12, n: 'Ours', attr: 'str', atk: 'Melee', roles: [] });
+  ds.heroes.push({ id: 24, n: 'Blind', attr: 'int', atk: 'Ranged', roles: [] });
+  // Blind has 500 games against our hero and NONE against either enemy.
+  ds.matchups[24] = { 12: { g: 500, w: 300, p: 0.6, lb: 0.55, ub: 0.65, t: 'high' } };
+
+  const out = recommend(ds, { enemyPicks: [10, 11], ourPicks: [12], limit: 10 });
+  const names = out.map((x) => x.name);
+  assert.ok(names.includes('Blind'), 'still listed: it has synergy evidence');
+  assert.equal(names[names.length - 1], 'Blind', 'no enemy evidence ranks last');
+});
+
+test('优先胜率 leads on the version win rate, 优先克制 on the matchup', () => {
+  // X beats the enemy but is weak overall; Y is strong overall but even vs the
+  // enemy. Z exists only to give both a second matchup, so base != counter.
+  const ds = {
+    meta: {},
+    heroes: [
+      { id: 10, n: 'E', attr: 'agi', atk: 'Melee', roles: [] },
+      { id: 30, n: 'Z', attr: 'str', atk: 'Melee', roles: [] },
+      { id: 40, n: 'X', attr: 'int', atk: 'Ranged', roles: [] },
+      { id: 41, n: 'Y', attr: 'int', atk: 'Ranged', roles: [] },
+    ],
+    matchups: {
+      40: {
+        10: { g: 500, w: 300, p: 0.6, lb: 0.55, ub: 0.65, t: 'high' },
+        30: { g: 500, w: 200, p: 0.4, lb: 0.35, ub: 0.45, t: 'high' },
+      },
+      41: {
+        10: { g: 500, w: 250, p: 0.5, lb: 0.45, ub: 0.55, t: 'high' },
+        30: { g: 500, w: 300, p: 0.6, lb: 0.55, ub: 0.65, t: 'high' },
+      },
+    },
+  };
+  const opts = { enemyPicks: [10], banned: [30], limit: 10 };
+
+  const counter = recommend(ds, { ...opts, mode: 'counter' });
+  assert.equal(counter[0].name, 'X', '优先克制 takes the hero that beats E');
+  assert.ok(counter[0].base.shrunk < counter[1].base.shrunk, 'even though X is weaker overall');
+
+  const winrate = recommend(ds, { ...opts, mode: 'winrate' });
+  assert.equal(winrate[0].name, 'Y', '优先胜率 takes the stronger hero overall');
+});
+
+test('the synergy mode weights our own picks above the enemy matchup', () => {
+  assert.ok(MODES.synergy.weights.synergy > MODES.synergy.weights.counter);
+  assert.ok(MODES.synergy.weights.synergy > MODES.synergy.weights.base);
+  assert.ok(MODES.winrate.weights.base > MODES.winrate.weights.counter);
+});
+
+test('mode metadata is complete and consistent', () => {
+  assert.deepEqual(MODE_KEYS, Object.keys(MODES), 'every mode is listed in the UI order');
+  assert.equal(DEFAULT_MODE, 'counter', '优先克制 is the default');
+  assert.equal(DEFAULT_WEIGHTS, MODES.counter.weights, 'the default weights ARE the counter preset');
+  for (const key of MODE_KEYS) {
+    assert.equal(typeof MODES[key].label, 'string', `${key} has a label`);
+    assert.equal(typeof MODES[key].hint, 'string', `${key} has a hint`);
+    assert.ok(MODES[key].hint.length > 4, `${key} hint is descriptive`);
+    const w = MODES[key].weights;
+    const sum = w.counter + w.synergy + w.base;
+    assert.ok(Math.abs(sum - 1) < 1e-9, `${key} weights sum to 1`);
+  }
+  assert.equal(MODES.counter.counterFirst, true);
+  assert.equal(MODES.winrate.counterFirst, false);
+  assert.equal(MODES.synergy.counterFirst, false);
+});
+
+test('an unknown mode falls back to the default instead of throwing', () => {
+  const out = recommend(counterFixture(), { enemyPicks: [10, 11], mode: 'nonsense', limit: 5 });
+  assert.ok(out.length > 0);
+  assert.equal(out[0].name, 'C');
+});
+
+test('a single enemy pick still separates 克制 from 不克制', () => {
+  const ds = counterFixture();
+  const out = recommend(ds, { enemyPicks: [10], limit: 10 });
+  const names = out.map((x) => x.name);
+  // vs E1: C 0.55 strong, A 0.60 strong, B 0.51 mild, D 0.44 weak.
+  assert.equal(names[names.length - 1], 'D', 'the 不克制 hero is last');
+  assert.ok(!names.slice(0, 3).includes('D'));
+});
+
 
 /* ---------------- shrinkage: the scoring fix ---------------- */
 

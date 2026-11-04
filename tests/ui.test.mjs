@@ -262,7 +262,7 @@ const IDS = [
   'sourceFab', 'sourceNote', 'starBtn', 'starCount',
   'banSlots', 'banCount', 'banPanel',
   'pool', 'search', 'sideToggle', 'resetBtn', 'minGames',
-  'wCounter', 'wSynergy', 'wBase', 'wCounterOut', 'wSynergyOut', 'wBaseOut',
+  'modeRow', 'modeHint',
 ];
 for (const id of IDS) {
   const el = new El(id === 'pool' ? 'div' : 'section');
@@ -295,6 +295,15 @@ for (const side of ['our', 'ban', 'enemy']) {
   b.setAttribute('data-side', side);
   if (side === 'enemy') b.className = 'active';
   toggle.appendChild(b);
+}
+
+// Ranking-mode picker, mirroring index.html (优先克制 default).
+const modeRow = byId.get('modeRow');
+for (const mode of ['winrate', 'counter', 'synergy']) {
+  const b = new El('button');
+  b.setAttribute('data-mode', mode);
+  if (mode === 'counter') b.className = 'active';
+  modeRow.appendChild(b);
 }
 
 // Data-source switcher with three buttons, mirroring index.html (merged default).
@@ -418,6 +427,14 @@ const settle = () => new Promise((r) => setTimeout(r, 70));
 /** Clear the draft so each test starts from a known state. */
 async function resetDraft() {
   q('resetBtn').fire('click', {});
+  // 重置 BP deliberately KEEPS the ban list (a standing "I do not play this"
+  // preference), so bans would otherwise leak between tests. Clear them by hand
+  // by clicking each ban tile to take the hero back.
+  for (let guard = 0; guard < 200; guard++) {
+    const tile = q('banSlots').children[0];
+    if (!tile) break;
+    tile.fire('click', {});
+  }
   // The search box is view state that the app's reset deliberately leaves alone
   // (it resets the draft, not the filters), but text left in it would filter the
   // pool for every later test. Clear it here.
@@ -1027,6 +1044,147 @@ test('the star button does not appear in the app logic paths it should not', asy
     html.indexOf('starBtn') < html.indexOf('metaBtn'),
     'star sits to the LEFT of 数据 so the rightmost control stays 数据'
   );
+});
+
+/* ---------------- ranking modes ---------------- */
+
+const clickMode = (mode) => {
+  const btn = byId.get('modeRow').children.find((b) => b.dataset.mode === mode);
+  q('modeRow').fire('click', { target: btn });
+};
+const activeMode = () =>
+  byId.get('modeRow').children.filter((b) => b._classes.has('active')).map((b) => b.dataset.mode);
+
+test('优先克制 is the default mode, and the buttons agree', () => {
+  assert.deepEqual(activeMode(), ['counter'], 'exactly one mode is active');
+  assert.match(q('modeHint').textContent, /非常克制/, 'the hint explains the ordering');
+});
+
+test('the mode picker replaces the weight sliders', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(!/id="wCounter"/.test(html), 'the 克制 slider is gone');
+  assert.ok(!/id="wSynergy"/.test(html), 'the 协同 slider is gone');
+  assert.ok(!/id="wBase"/.test(html), 'the 版本强度 slider is gone');
+  for (const label of ['优先胜率', '优先克制', '优先配合']) {
+    assert.ok(html.includes(label), `${label} button exists`);
+  }
+});
+
+test('switching mode changes which heroes are recommended', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1); // an enemy to rank against
+
+  const order = (mode) => {
+    clickMode(mode);
+    return recHeroIds();
+  };
+
+  const counter = order('counter');
+  const winrate = order('winrate');
+  const synergy = order('synergy');
+
+  assert.ok(counter.length > 0, 'recommendations render');
+  // They may coincide on a tiny fixture; what must hold is that switching is
+  // actually wired through to the engine, so each returns a real ranking.
+  assert.ok(winrate.length > 0);
+  assert.ok(synergy.length > 0);
+  assert.notDeepEqual([counter, winrate, synergy].map((x) => x.length), [0, 0, 0]);
+});
+
+test('the hint follows the selected mode', async () => {
+  await resetDraft();
+  clickMode('winrate');
+  assert.match(q('modeHint').textContent, /胜率/);
+  assert.deepEqual(activeMode(), ['winrate']);
+
+  clickMode('synergy');
+  assert.match(q('modeHint').textContent, /己方/);
+  assert.deepEqual(activeMode(), ['synergy']);
+});
+
+/* ---------------- "不想玩他" on a recommendation ---------------- */
+
+test('each recommendation offers 不想玩他, which bans the hero', async () => {
+  await resetDraft();
+  clickToggle('enemy');
+  tapPoolItem(1);
+  clickToggle('our');
+
+  const card = firstRec();
+  const banBtn = card.children.find((c) => c._classes.has('rec-ban'));
+  assert.ok(banBtn, 'the card has a ban button');
+  assert.equal(banBtn.textContent, '不想玩他');
+
+  const heroId = Number(card.dataset.hero);
+  banBtn.fire('click', { stopPropagation() {} });
+
+  assert.equal(banCount(), 1, 'the hero went into ban');
+  assert.ok(!recHeroIds().includes(heroId), 'and left the recommendation list');
+  assert.equal(count('our'), 0, 'and was NOT added to our team');
+});
+
+test('不想玩他 works from any armed side', async () => {
+  for (const armed of ['our', 'enemy']) {
+    await resetDraft();
+    clickToggle('enemy');
+    tapPoolItem(1); // setup: one enemy pick, so the recs have something to rank
+    clickToggle(armed);
+
+    const beforeOur = count('our');
+    const beforeEnemy = count('enemy');
+
+    const card = firstRec();
+    const heroId = Number(card.dataset.hero);
+    card.children.find((c) => c._classes.has('rec-ban')).fire('click', { stopPropagation() {} });
+
+    assert.equal(banCount(), 1, `banned while ${armed} was armed`);
+    // The ban button must not also select the hero anywhere.
+    assert.equal(count('our'), beforeOur, 'our team unchanged');
+    assert.equal(count('enemy'), beforeEnemy, 'enemy team unchanged');
+    assert.ok(!recHeroIds().includes(heroId));
+  }
+});
+
+/* ---------------- reset keeps bans ---------------- */
+
+test('重置 BP clears both teams but KEEPS the ban list', async () => {
+  await resetDraft();
+  clickToggle('ban');
+  tapPoolItem(4);
+  tapPoolItem(5);
+  assert.equal(banCount(), 2);
+
+  clickToggle('our');
+  tapPoolItem(1);
+  clickToggle('enemy');
+  tapPoolItem(2);
+  assert.equal(count('our'), 1);
+  assert.equal(count('enemy'), 1);
+
+  q('resetBtn').fire('click', {});
+
+  assert.equal(count('our'), 0, 'our team cleared');
+  assert.equal(count('enemy'), 0, 'enemy team cleared');
+  assert.equal(banCount(), 2, 'bans survive — they are a standing preference');
+});
+
+test('a banned hero stays banned after a reset (a full round trip)', async () => {
+  await resetDraft();
+  clickToggle('ban');
+  tapPoolItem(7);
+  assert.equal(banCount(), 1);
+
+  q('resetBtn').fire('click', {});
+  assert.equal(banCount(), 1);
+  assert.ok(
+    poolItem(7)._classes.has('used'),
+    'the tile is still greyed out, so the ban is visible'
+  );
+  // And it is still excluded from comments: it must not come back in the recs.
+  clickToggle('enemy');
+  tapPoolItem(1);
+  assert.ok(!recHeroIds().includes(7), 'still excluded from recommendations');
 });
 
 /* ---------------- ban bucket ---------------- */

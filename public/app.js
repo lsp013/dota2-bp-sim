@@ -9,6 +9,9 @@ import {
   recommend,
   lookupPair,
   heroBase,
+  MODES,
+  MODE_KEYS,
+  DEFAULT_MODE,
 } from './lib/recommend.mjs';
 import {
   addHero,
@@ -162,7 +165,11 @@ const state = {
    * can be picked without touching the mouse.
    */
   cursor: -1,
-  weights: { counter: 0.7, synergy: 0.2, base: 0.1 },
+  /**
+   * Which ranking preset the recommendations use — one of MODES in
+   * src/recommend.mjs. 优先克制 by default: this is a counter-pick tool.
+   */
+  mode: DEFAULT_MODE,
   minGames: 30,
 };
 
@@ -300,6 +307,7 @@ async function boot() {
   installDragAndDrop();
   updateSourceButtons();
   updateSideButtons();
+  updateModeButtons();
   render();
   // Fire and forget: the star link works whether or not this resolves.
   showStarCount();
@@ -352,17 +360,14 @@ function bindControls() {
     p.hidden = !p.hidden;
   });
 
-  const wire = (id, key, outId) => {
-    const el = $(id);
-    el.addEventListener('input', () => {
-      state.weights[key] = Number(el.value) / 100;
-      $(outId).textContent = `${el.value}%`;
-      render();
-    });
-  };
-  wire('#wCounter', 'counter', '#wCounterOut');
-  wire('#wSynergy', 'synergy', '#wSynergyOut');
-  wire('#wBase', 'base', '#wBaseOut');
+  // Ranking mode. Replaces the old 克制/协同/版本强度 sliders: three presets are
+  // easier to reason about than a continuous blend, and 优先克制 needs an
+  // ordering rule that weights alone cannot express.
+  $('#modeRow').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-mode]');
+    if (!btn) return;
+    setMode(btn.dataset.mode);
+  });
 
   $('#minGames').addEventListener('change', (e) => {
     state.minGames = Number(e.target.value);
@@ -370,11 +375,11 @@ function bindControls() {
   });
 
   $('#resetBtn').addEventListener('click', () => {
-    // Clears all three buckets. Forgetting the bans meant a reset left heroes
-    // silently excluded from every later recommendation.
+    // Clears the two teams only. Bans are a standing preference ("I do not play
+    // this hero"), so they survive a reset — otherwise every new draft would
+    // start by re-banning the same heroes.
     state.our = [];
     state.enemy = [];
-    state.ban = [];
     render();
   });
 
@@ -523,7 +528,7 @@ function renderRecs() {
     ourPicks: state.our,
     enemyPicks: state.enemy,
     banned: state.ban,
-    weights: state.weights,
+    mode: state.mode,
     minPairGames: state.minGames,
     limit: 20,
   });
@@ -630,7 +635,22 @@ function renderRecs() {
     // A press on ⓘ must not start a drag of the card.
     info.addEventListener('pointerdown', (e) => e.stopPropagation());
 
-    card.append(rank, img, main, score, info);
+    // "I don't want to play this hero" — bans it straight from the list, which
+    // is where the reaction actually happens (you see the pick, you know you
+    // will not play it). Bans survive 重置 BP, so this is a one-time decision.
+    const ban = document.createElement('button');
+    ban.type = 'button';
+    ban.className = 'rec-ban';
+    ban.textContent = '不想玩他';
+    ban.title = `${r.name} · 放进 ban 位，不再推荐`;
+    ban.setAttribute('aria-label', `不想玩 ${r.name}，放进 ban 位`);
+    ban.addEventListener('click', (e) => {
+      e.stopPropagation();
+      addTo('ban', r.heroId);
+    });
+    ban.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+    card.append(rank, img, main, score, ban, info);
     el.appendChild(card);
   });
 }
@@ -640,6 +660,30 @@ function setActiveSide(side) {
   updateSideButtons();
   renderTeams();
   renderPool();
+}
+
+/** Switch the ranking preset and re-render. */
+function setMode(mode) {
+  state.mode = MODE_KEYS.includes(mode) ? mode : DEFAULT_MODE;
+  updateModeButtons();
+  renderRecs();
+}
+
+/**
+ * Sync the mode buttons and their explanation with `state.mode`.
+ *
+ * Also called at boot: the markup hard-codes the default as active, and without
+ * this a non-default `mode` would leave the buttons disagreeing with the
+ * algorithm actually being used.
+ */
+function updateModeButtons() {
+  for (const btn of document.querySelectorAll('#modeRow button[data-mode]')) {
+    const on = btn.dataset.mode === state.mode;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  }
+  const hint = $('#modeHint');
+  if (hint) hint.textContent = MODES[state.mode]?.hint ?? '';
 }
 
 /**
@@ -1144,7 +1188,7 @@ function openDetail(heroId) {
     ourPicks: state.our,
     enemyPicks: state.enemy,
     banned: state.ban,
-    weights: state.weights,
+    mode: state.mode,
     minPairGames: state.minGames,
     limit: 200,
   }).find((r) => r.heroId === heroId);
