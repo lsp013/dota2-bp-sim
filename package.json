@@ -9,6 +9,7 @@
   },
   "scripts": {
     "fetch": "node scripts/fetch-data.mjs",
+    "stratz": "node scripts/build-stratz.mjs",
     "sync": "node scripts/sync-lib.mjs",
     "serve": "node scripts/serve.mjs",
     "test": "node --test tests/",

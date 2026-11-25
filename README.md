@@ -142,6 +142,62 @@ OpenDota 的对位数据样本量很小（实测 15,972 个组合：中位数 **
 
 因此 STRATZ 数据靠浏览器控制台抓取（见 `scripts/stratz-matrix-snippet.js`），无法进 CI。数据抓取时间会显示在「数据」面板里，超过 21 天会标红提醒。
 
+### 大版本更新后怎么刷新数据
+
+补丁一落地，旧数据就开始过期——它记录的是**上个版本**的对位。两个数据集都不会自己变新：
+
+| 数据 | 谁更新 | 要你动手吗 |
+|---|---|---|
+| `data.json`（OpenDota） | GitHub Actions 每周一 | 不用；想立刻更新就去 Actions 手动跑 |
+| `data-stratz.json`（STRATZ） | **只能手动** | **要**（Cloudflare 只放行真实浏览器） |
+
+完整流程，按顺序：
+
+**① 确认英雄名单有没有变**（有新增英雄才需要改代码）
+
+```bash
+node -e "const fs=require('fs');const local=new Set(JSON.parse(fs.readFileSync('public/data/data.json','utf8')).heroes.map(h=>h.id));fetch('https://www.dota2.com/datafeed/herolist?language=schinese').then(r=>r.json()).then(j=>{const v=j.result.data.heroes;console.log('官方',v.length,'dataset',local.size);console.log('dataset 里缺:',v.filter(h=>!local.has(h.id)).map(h=>h.id+':'+h.name_loc));})"
+```
+
+正常输出是「官方 127 dataset 127」+ 空数组。出现新 id 的话，去 `scripts/stratz-matrix-snippet.js` 的 `HERO_IDS` 补上，`src/heroNames.mjs` 的中文名由 `patch-hero-names.mjs` 自动补，外号要手动加一条 —— `heroNames.test.mjs` 会指出漏了哪个。
+
+**② 更新 OpenDota 数据**
+
+最省事的做法：仓库 → Actions → `Deploy` → **Run workflow**（`workflow_dispatch` 会抓数据并提交回仓库）。
+
+本地跑也可以（约 3 分钟，127 个英雄逐个请求，已带 700ms 限速）：
+
+```bash
+npm run fetch
+```
+
+它顺带把 `meta.patch` 从 OpenDota 的补丁列表里刷新成当前版本，所以补丁号是自动的。
+
+**③ 更新 STRATZ 数据（需要你本人操作浏览器）**
+
+1. 拿 token：登录 [stratz.com](https://stratz.com) → 头像 → **API**（`https://stratz.com/api`），复制那一长串。
+2. 用**真实浏览器**打开 <https://api.stratz.com/graphiql>，等页面正常渲染（能过 Cloudflare 就说明这次浏览器指纹被放行了；若停在那个人机验证页，刷新重试）。
+3. `F12` → **Console**。
+4. 打开 `scripts/stratz-matrix-snippet.js`，把两个 `---8<---` 标记之间的内容整体复制进控制台，把 `PASTE_YOUR_TOKEN_HERE` 换成你刚才的 token，回车。
+5. 别关标签页，等 **1–3 分钟**（每 10 个英雄打一行进度）。结束时会自动下载 `stratz-matrix.json`（控制台会打印 heroesWithData / pairs / 中位数等摘要，先看一眼有没有异常）。
+6. 把下载到的文件放进 `F:\code\dsh\dota_BP\tmp\`（`tmp/` 已被 git 忽略，原始 dump 不进仓库）。
+7. 转成站点用的数据集：
+
+```bash
+npm run stratz      # = node scripts/build-stratz.mjs
+```
+
+它会读 `tmp/stratz-matrix.json`，以 `data.json` 的英雄表为基准对齐，输出精简格式的 `public/data/data-stratz.json`，并把 `sourcePulledAt`、`bracket`、样本分位数写进 meta。如果 `pairs` 是 0 会直接报错退出——那说明抓取失败，不要提交。
+
+**④ 提交**
+
+```bash
+npm test && git add -A && git commit -m "data: refresh for patch X.YZ" && git sync
+```
+
+刷新后打开页面的「数据」面板核对：`补丁` 应是新版本号、`STRATZ 抓取时间` 应是今天。界面上的过期提示以 21 天为界。
+
+
 ---
 
 ## 另一个数据源：OpenDota
@@ -194,6 +250,24 @@ npm test          # 跑测试
 > 所以本地全绿、CI 全红。
 > 改完代码请尽量用 Node 20 验证一次（`nvm use 20`），或保持对浏览器全局量的
 > `typeof` 防御写法。`tests/ui.test.mjs` 里有一条专门的回归测试覆盖这个坑。
+
+---
+
+## 界面风格：Retro-Futurism / CRT 终端
+
+近黑底 + 青/品红霓虹 + 一层很淡的扫描线；数字与拉丁字母走系统等宽字体，中文回退到系统黑体；方角细边，面板左上/右上各画一道 L 形括线，代替原来的大圆角 GitHub 暗色卡片。
+
+两个刻意的取舍：
+
+- **不引 Google Fonts。** 设计系统推荐的是 Orbitron + JetBrains Mono，但 `fonts.googleapis.com` 在中国大陆基本连不上；为一个装饰性字体引外部依赖，既拖慢首屏（还要等字体下载才不跳字），也违背这个项目「零依赖、少运维」的前提。等宽感靠 `ui-monospace → Cascadia Mono → Consolas → Menlo` 这类本地字体栈拿到，代价是字形不统一，收益是永远可用、零请求。
+- **霓虹只用在背景、边框、强调元素上，不动语义色。** 敌方红 / 我方绿 / 非常克制绿 / 克制黄 / 不克制红 是数据本身的编码，属于**信息**而不是装饰，所以整套霓虹配色是绕着它们搭的，而不是把它们替换掉。
+
+实现要点：
+
+- 扫描线是 `body::after` 的一层 `pointer-events: none` 固定覆盖层，`z-index: 800` —— 压在弹层之上（它是「屏幕」属性）、拖拽幽灵之下（免得拖动中的小卡片发糊）。
+- 「已武装」的上方栏位有一圈 2.6s 的呼吸光；`prefers-reduced-motion` 会连同抖动一起关掉。
+- 悬停抬升只在 `@media (hover: hover) and (pointer: fine)` 里生效 —— 触屏上 `:hover` 会粘住，粘住的位移比没有位移更糟。
+- 新增 `<meta name="color-scheme" content="dark">`，让浏览器把滚动条、下拉框、自动填充背景也渲染成深色。
 
 ---
 
@@ -329,7 +403,7 @@ src/
 public/
   index.html         页面
   app.js             前端逻辑（BP 状态机、拖拽、数据源切换、渲染）
-  styles.css         深色移动优先样式
+  styles.css         Retro-Futurism / CRT 终端风格（深色移动优先）
   data/data.json           OpenDota 数据（由 Actions 每周自动更新）
   data/data-stratz.json    STRATZ 数据（浏览器抓取后由 build-stratz.mjs 生成）
   lib/               由 scripts/sync-lib.mjs 从 src/ 自动生成，勿手改

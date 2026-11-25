@@ -1,15 +1,46 @@
+/* ==========================================================================
+   Dota 2 BP 模拟器 — 视觉层
+   --------------------------------------------------------------------------
+   风格：Retro-Futurism / CRT 终端（复古未来主义）
+     · 近黑底色 + 青/品红霓虹 + 扫描线
+     · 数字与拉丁字母用等宽字，中文用系统黑体兜底
+     · 方角、细边框、角落括线（corner bracket）代替大圆角卡片
+
+   两条自我约束：
+   1. 不引外部字体。用户在中国大陆，fonts.googleapis.com 基本连不上，
+      而远程字体与本项目「零依赖、少运维」的定位冲突。等宽感靠系统字体栈。
+   2. 语义色不动。敌方=红、我方=绿、非常克制=绿/克制=黄/不克制=红
+      是数据本身的编码，霓虹只在背景、边框、强调元素上做文章。
+   ========================================================================== */
+
 :root {
-  --bg: #0d1117;
-  --panel: #161b22;
-  --panel-2: #1c2128;
-  --border: #30363d;
-  --text: #e6edf3;
-  --muted: #8b949e;
-  --accent: #58a6ff;
-  --green: #3fb950;
-  --yellow: #d29922;
-  --red: #f85149;
-  --rad: 10px;
+  /* 底色：偏蓝的近黑，比纯黑有层次，也不会在 OLED 上和边框糊在一起 */
+  --bg: #05070c;
+  --panel: #090d14;
+  --panel-2: #0e141d;
+  --panel-3: #131c27;
+  --border: #1d2a3a;
+  --border-hi: #2c4056;
+
+  --text: #dce7f2;
+  --muted: #8298ad;
+
+  /* 霓虹强调色 */
+  --cyan: #2ff0ff;
+  --cyan-2: #12b8cc;
+  --magenta: #ff4fd8;
+  --accent: var(--cyan);
+
+  /* 语义色（数据含义，勿随意替换） */
+  --green: #2ee6a0;
+  --yellow: #ffcf5c;
+  --red: #ff5c7a;
+
+  --rad: 3px;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", "Cascadia Mono",
+    "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 * { box-sizing: border-box; }
@@ -23,11 +54,38 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 520px at 50% -12%, rgba(47, 240, 255, .07), transparent 72%),
+    radial-gradient(820px 460px at 106% 104%, rgba(255, 79, 216, .055), transparent 70%),
+    var(--bg);
   color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font: 15px/1.55 var(--font-ui);
   padding-bottom: env(safe-area-inset-bottom);
+  -webkit-tap-highlight-color: transparent;
 }
+
+/* CRT 扫描线。全局覆盖，pointer-events:none 保证不挡点击，
+   z-index 压在弹层之上（扫描线是「屏幕」属性，不是内容属性），
+   但仍低于拖拽幽灵，免得拖动中的小卡片变糊。 */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(0, 0, 0, .32) 0 1px,
+    rgba(0, 0, 0, 0) 1px 4px
+  );
+  opacity: .55;
+}
+
+/* 选中文字用反色块——像终端里的光标块，比半透明高亮更有年代感 */
+::selection { background: var(--magenta); color: #0a0410; }
+
+/* 焦点环统一走青色，键盘导航时才出现 */
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
 /* ---------- top bar ---------- */
 .topbar {
@@ -35,33 +93,57 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px;
   padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
-  background: rgba(13,17,23,.92);
-  backdrop-filter: blur(8px);
+  background: linear-gradient(180deg, rgba(5, 7, 12, .97), rgba(5, 7, 12, .85));
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .55);
 }
-.topbar h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
-.topbar h1 span { color: var(--muted); font-weight: 400; }
-.meta-btn {
+/* 底沿的一道光，CRT 面板的分隔线 */
+.topbar::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(47, 240, 255, .55) 22%, rgba(255, 79, 216, .4) 78%, transparent);
+  opacity: .75;
+}
+.topbar h1 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 15px; font-weight: 700;
+  letter-spacing: .16em; text-transform: uppercase;
+  color: #eaf6ff;
+  text-shadow: 0 0 16px rgba(47, 240, 255, .45);
+  white-space: nowrap;
+}
+.topbar h1 span {
+  color: var(--cyan); font-weight: 400;
+  /* 中文标题在等宽栈里会回退到黑体，靠字距保持「终端」味 */
+  letter-spacing: .1em;
+}
+
+/* 胶囊按钮 → 方角小控件，更接近老式仪器上的按键 */
+.meta-btn,
+.star-btn {
   background: var(--panel-2); color: var(--text);
-  border: 1px solid var(--border); border-radius: 999px;
-  padding: 5px 12px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--rad);
+  padding: 5px 11px; font-size: 13px; cursor: pointer;
+  font-family: var(--font-mono); letter-spacing: .04em;
+  transition: border-color .15s, color .15s, box-shadow .15s;
 }
-.meta-btn:active { background: var(--border); }
+.meta-btn:active { background: var(--panel-3); }
+.meta-btn:hover { border-color: var(--cyan-2); color: #fff; }
 
 /* GitHub star link. Cannot star on the user's behalf — a static site has no
    OAuth — so it opens the repo, where the real Star button lives. */
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .star-btn {
   display: inline-flex; align-items: center; gap: 5px;
-  background: var(--panel-2); color: var(--text); text-decoration: none;
-  border: 1px solid var(--border); border-radius: 999px;
-  padding: 5px 12px; font-size: 13px; cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+  text-decoration: none;
 }
 .star-btn:hover, .star-btn:focus-visible {
-  border-color: var(--yellow); outline: none;
+  border-color: var(--yellow); color: #fff;
+  box-shadow: 0 0 14px -6px var(--yellow);
 }
-.star-btn:active { background: var(--border); }
+.star-btn:active { background: var(--panel-3); }
 .star-icon { color: var(--yellow); font-size: 14px; line-height: 1; }
 .star-count {
   color: var(--muted); font-size: 12px;
@@ -75,52 +157,102 @@ body {
   font-size: 13px; color: var(--muted); line-height: 1.7;
 }
 .meta-panel b { color: var(--text); font-weight: 600; }
+.meta-panel code {
+  font-family: var(--font-mono); color: var(--cyan);
+  background: rgba(47, 240, 255, .07); padding: 1px 4px; border-radius: 2px;
+}
 
-.loading { padding: 40px 14px; text-align: center; color: var(--muted); }
+.loading {
+  padding: 40px 14px; text-align: center; color: var(--muted);
+  font-family: var(--font-mono); letter-spacing: .12em; text-transform: uppercase;
+  animation: blink 1.4s steps(2, end) infinite;
+}
+@keyframes blink { 50% { opacity: .45; } }
 
 main { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 
+/* ---------- 通用面板外观 ---------- */
+/* 角落括线：只画左上、右上两个 L 形，比整圈发光克制，也够「仪器面板」 */
+.controls, .team, .panel {
+  position: relative;
+  background: linear-gradient(180deg, rgba(19, 28, 39, .62), rgba(9, 13, 20, .92));
+  border: 1px solid var(--border);
+  border-radius: var(--rad);
+}
+.controls::before, .team::before, .panel::before {
+  content: "";
+  position: absolute; inset: -1px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--cyan-2), var(--cyan-2)) 0 0 / 11px 1px no-repeat,
+    linear-gradient(var(--cyan-2), var(--cyan-2)) 0 0 / 1px 11px no-repeat,
+    linear-gradient(var(--cyan-2), var(--cyan-2)) 100% 0 / 11px 1px no-repeat,
+    linear-gradient(var(--cyan-2), var(--cyan-2)) 100% 0 / 1px 11px no-repeat;
+  opacity: .5;
+}
+/* 浮动层（推荐卡、拖拽幽灵）不参与括线，避免视觉噪音过载 */
+
 /* ---------- controls ---------- */
 .controls {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: var(--rad); padding: 12px;
+  padding: 12px;
   display: flex; flex-direction: column; gap: 10px;
 }
-.weight-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.weight-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .weight-row label {
-  display: flex; flex-direction: column; gap: 4px;
-  font-size: 12px; color: var(--muted); flex: 1 1 110px;
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 11px; color: var(--muted); flex: 1 1 110px;
+  font-family: var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
 }
 .weight-row label.min-games { flex: 0 1 auto; }
-.weight-row input[type=range] { width: 100%; accent-color: var(--accent); }
-.weight-row output { color: var(--text); font-variant-numeric: tabular-nums; }
+
 select, input[type=search] {
   background: var(--panel-2); color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: var(--rad);
   padding: 7px 10px; font-size: 14px; font-family: inherit;
+  transition: border-color .15s, box-shadow .15s, background .15s;
 }
+select:hover, input[type=search]:hover { border-color: var(--border-hi); }
+select:focus, input[type=search]:focus {
+  border-color: var(--cyan-2); outline: none;
+  box-shadow: 0 0 0 1px rgba(47, 240, 255, .25), 0 0 18px -8px var(--cyan);
+}
+select { font-family: var(--font-mono); }
+input[type=search]::placeholder { color: #6f8499; }
+
 .btn {
   border: 1px solid var(--border); background: var(--panel-2);
-  color: var(--text); border-radius: 8px; padding: 8px 14px;
-  font-size: 14px; cursor: pointer; font-family: inherit;
+  color: var(--text); border-radius: var(--rad); padding: 8px 14px;
+  font-size: 13px; cursor: pointer;
+  font-family: var(--font-mono); letter-spacing: .08em;
+  transition: border-color .15s, color .15s, box-shadow .15s, background .15s;
 }
-.btn.danger { color: var(--red); border-color: rgba(248,81,73,.35); margin-left: auto; }
+.btn:hover { border-color: var(--border-hi); color: #fff; }
+.btn:active { background: var(--panel-3); }
+.btn.danger { color: var(--red); border-color: rgba(255, 92, 122, .35); margin-left: auto; }
+.btn.danger:hover {
+  border-color: var(--red); background: rgba(255, 92, 122, .1);
+  box-shadow: 0 0 16px -8px var(--red);
+}
 
 /* ---------- teams ---------- */
 .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 560px) { .teams { grid-template-columns: 1fr; } }
 
 .team {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: var(--rad); padding: 12px;
+  padding: 12px;
+  transition: border-color .15s, background .15s, box-shadow .2s;
 }
 .team h2 {
-  margin: 0 0 10px; font-size: 13px; font-weight: 600;
-  color: var(--muted); text-transform: uppercase; letter-spacing: .6px;
+  margin: 0 0 10px; font-size: 12px; font-weight: 700;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .18em;
+  font-family: var(--font-mono);
+  display: flex; align-items: center; gap: 6px;
 }
-.team h2 span { color: var(--text); }
-.team.ours h2 { color: #7ee787; }
-.team.theirs h2 { color: #ffa198; }
+.team h2 span {
+  color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: .04em;
+}
+.team.ours h2 { color: var(--green); text-shadow: 0 0 14px rgba(46, 230, 160, .35); }
+.team.theirs h2 { color: var(--red); text-shadow: 0 0 14px rgba(255, 92, 122, .35); }
 
 .slots { display: flex; flex-wrap: wrap; gap: 8px; min-height: 48px; }
 /* Hero name removed: the slot is just the portrait, and clicking it removes the
@@ -128,34 +260,45 @@ select, input[type=search] {
 .slot {
   display: flex; align-items: center; justify-content: center;
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 3px;
+  border-radius: var(--rad); padding: 3px;
   width: 48px; height: 48px;
   cursor: pointer;
-  transition: border-color .15s, background .15s;
+  transition: border-color .15s, background .15s, box-shadow .15s;
 }
 .slot img {
   width: 100%; height: 100%;
   object-fit: cover; object-position: center;
-  border-radius: 6px; display: block;
+  border-radius: 2px; display: block;
 }
 .slot:hover, .slot:focus-visible {
   border-color: var(--red);
-  background: #241a1a;
+  background: rgba(255, 92, 122, .09);
+  box-shadow: 0 0 16px -8px var(--red);
   outline: none;
 }
 .slot.empty {
-  color: var(--muted); border-style: dashed;
-  font-size: 11px; cursor: default;
+  color: #61758a; border-style: dashed;
+  font-size: 10px; cursor: default;
+  font-family: var(--font-mono); letter-spacing: .1em;
 }
-.slot.empty:hover { border-color: var(--border); background: var(--panel-2); }
+.slot.empty:hover { border-color: var(--border); background: var(--panel-2); box-shadow: none; }
 
 /* Which side a tap in the hero pool will fill. */
-.team.active-target { border-color: #3d5a7a; }
-.team.active-target h2 { opacity: 1; }
-.team { transition: border-color .15s, background .15s; }
-.team.drop-hover { border-color: var(--accent); background: #17212e; }
-.team.drop-hover.ours { border-color: var(--green); }
-.team.drop-hover.theirs { border-color: var(--red); }
+.team.active-target { border-color: var(--border-hi); animation: armed 2.6s ease-in-out infinite; }
+.team.active-target.ours { border-color: rgba(46, 230, 160, .55); }
+.team.active-target.theirs { border-color: rgba(255, 92, 122, .55); }
+@keyframes armed {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(47, 240, 255, 0); }
+  50% { box-shadow: 0 0 22px -10px rgba(47, 240, 255, .9); }
+}
+.team.drop-hover {
+  border-color: var(--accent); background: rgba(47, 240, 255, .06);
+  box-shadow: 0 0 24px -10px var(--cyan);
+}
+.team.drop-hover.ours { border-color: var(--green); background: rgba(46, 230, 160, .07); }
+.team.drop-hover.theirs { border-color: var(--red); background: rgba(255, 92, 122, .07); }
+/* 拖到上方时以落点颜色为准，别让「已武装」的呼吸光继续抢注意力 */
+.team.active-target.drop-hover { animation: none; }
 .team.full-flash {
   border-color: var(--red);
   animation: shake .3s ease-in-out 2;
@@ -165,17 +308,24 @@ select, input[type=search] {
   25% { transform: translateX(-4px); }
   75% { transform: translateX(4px); }
 }
-.pool.drop-hover, [data-drop="pool"].drop-hover { border-color: var(--red); background: #1e1416; }
+.pool.drop-hover, [data-drop="pool"].drop-hover {
+  border-color: var(--red); background: rgba(255, 92, 122, .07);
+}
 
 /* ---------- panels ---------- */
 .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 860px) { .panels { grid-template-columns: 1fr; } }
 
-.panel {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: var(--rad); padding: 12px;
+.panel { padding: 12px; }
+.panel h3 {
+  margin: 0 0 4px; font-size: 13px; font-weight: 700;
+  font-family: var(--font-mono); letter-spacing: .14em; text-transform: uppercase;
+  color: #b9cfe0;
 }
-.panel h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.panel h3::before {
+  content: "▚ ";
+  color: var(--cyan); opacity: .7;
+}
 .hint { margin: 0 0 10px; font-size: 12px; color: var(--muted); line-height: 1.5; }
 
 /* ---------- recommendation cards ---------- */
@@ -186,96 +336,121 @@ select, input[type=search] {
   display: flex; flex-direction: column; gap: 8px;
   max-height: min(70vh, 620px);
 }
-.pool {
-  max-height: min(70vh, 620px);
-}
+.pool { max-height: min(70vh, 620px); }
 .recs, .pool {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 6px;
   scrollbar-width: thin;
-  scrollbar-color: #3d444d transparent;
+  scrollbar-color: var(--border-hi) transparent;
 }
 .recs::-webkit-scrollbar, .pool::-webkit-scrollbar { width: 8px; }
 .recs::-webkit-scrollbar-track, .pool::-webkit-scrollbar-track { background: transparent; }
-.recs::-webkit-scrollbar-thumb, .pool::-webkit-scrollbar-thumb { background: #3d444d; border-radius: 4px; }
-.recs::-webkit-scrollbar-thumb:hover, .pool::-webkit-scrollbar-thumb:hover { background: #525a63; }
+.recs::-webkit-scrollbar-thumb, .pool::-webkit-scrollbar-thumb {
+  background: var(--border-hi); border-radius: 4px;
+}
+.recs::-webkit-scrollbar-thumb:hover, .pool::-webkit-scrollbar-thumb:hover { background: var(--cyan-2); }
 @media (max-width: 860px) {
   .recs { max-height: 46vh; }
   .pool { max-height: 50vh; }
 }
+
 .rec {
   display: flex; align-items: center; gap: 10px;
-  background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 10px; cursor: pointer;
-  text-align: left; width: 100%; color: inherit; font-family: inherit; font-size: 14px;
+  background:
+    linear-gradient(90deg, rgba(47, 240, 255, .05), transparent 42%),
+    var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 2px solid rgba(47, 240, 255, .3);
+  border-radius: var(--rad); padding: 8px 10px; cursor: pointer;
+  text-align: left; width: 100%; color: inherit;
+  font-family: inherit; font-size: 14px;
+  transition: border-color .15s, box-shadow .15s, background .15s;
 }
-.rec:hover, .rec:focus-visible { border-color: var(--accent); outline: none; }
+.rec:hover, .rec:focus-visible {
+  border-color: rgba(47, 240, 255, .55);
+  border-left-color: var(--cyan);
+  box-shadow: 0 0 20px -10px var(--cyan), inset 0 0 30px -22px rgba(47, 240, 255, .8);
+  outline: none;
+}
 /* The evidence sheet lives behind this, since clicking the card now selects. */
 .rec-info {
   flex: 0 0 auto;
-  background: none; border: 1px solid transparent; border-radius: 6px;
+  background: none; border: 1px solid transparent; border-radius: var(--rad);
   color: var(--muted); font-size: 15px; line-height: 1;
   padding: 3px 5px; cursor: pointer; font-family: inherit;
+  transition: color .15s, border-color .15s;
 }
 .rec-info:hover, .rec-info:focus-visible {
-  color: var(--accent); border-color: var(--border); outline: none;
+  color: var(--cyan); border-color: var(--border); outline: none;
 }
-.rec img { width: 40px; height: 40px; border-radius: 6px; flex: 0 0 auto; }
+.rec img {
+  width: 40px; height: 40px; border-radius: 2px; flex: 0 0 auto;
+  border: 1px solid var(--border);
+}
 .rec-main { flex: 1; min-width: 0; }
 .rec-name { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 .rec-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .rec-score {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums; font-weight: 700;
   font-size: 15px; flex: 0 0 auto;
+  color: #eaf6ff; letter-spacing: -.02em;
 }
 .bar {
-  height: 3px; border-radius: 2px; background: var(--border);
+  height: 3px; border-radius: 2px; background: #16222f;
   margin-top: 5px; overflow: hidden;
 }
-.bar > i { display: block; height: 100%; background: var(--accent); }
+.bar > i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--cyan-2), var(--cyan));
+  box-shadow: 0 0 8px rgba(47, 240, 255, .6);
+}
 
 .tag {
-  font-size: 10px; padding: 1px 5px; border-radius: 4px;
+  font-size: 10px; padding: 1px 5px; border-radius: 2px;
   border: 1px solid currentColor; font-weight: 500;
-  white-space: nowrap;
+  white-space: nowrap; font-family: var(--font-mono); letter-spacing: .04em;
 }
 .t-high { color: var(--green); }
 .t-medium { color: var(--yellow); }
 .t-low { color: var(--red); }
 
 /* Counter verdicts — three visually distinct bands. */
-.t-strong { color: var(--green); background: rgba(63, 185, 80, .14); }
-.t-mild { color: var(--yellow); background: rgba(210, 153, 34, .14); }
-.t-weak { color: var(--red); background: rgba(248, 81, 73, .14); }
+.t-strong { color: var(--green); background: rgba(46, 230, 160, .13); }
+.t-mild { color: var(--yellow); background: rgba(255, 207, 92, .13); }
+.t-weak { color: var(--red); background: rgba(255, 92, 122, .13); }
 .t-unknown { color: var(--muted); }
 
 /* Keyboard cursor: the tile the arrow keys are on. Needs to read as "this one
    will be picked by Enter" without competing with the used/target colours. */
 .pool-item.cursor {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--cyan);
   outline-offset: 1px;
-  border-color: var(--accent);
+  border-color: var(--cyan);
+  box-shadow: 0 0 18px -6px var(--cyan);
 }
-.pool-item.cursor.used { outline-color: var(--yellow); border-color: var(--yellow); }
+.pool-item.cursor.used { outline-color: var(--yellow); border-color: var(--yellow); box-shadow: none; }
 
 /* "不想玩他" on a recommendation card. Quiet until hovered: it sits on every
    row, and a loud destructive button repeated 20 times is visual noise. */
 .rec-ban {
   flex: 0 0 auto;
   background: none; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--rad);
   padding: 3px 6px; font-size: 11px; line-height: 1.3; cursor: pointer;
   font-family: inherit; white-space: nowrap;
+  transition: color .15s, border-color .15s, background .15s;
 }
 .rec-ban:hover, .rec-ban:focus-visible {
-  color: var(--red); border-color: var(--red); background: rgba(248, 81, 73, .1);
+  color: var(--red); border-color: var(--red); background: rgba(255, 92, 122, .12);
   outline: none;
 }
 
 .rank {
   flex: 0 0 auto; width: 20px; text-align: right;
-  color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+  color: var(--cyan-2); font-size: 12px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 
 .empty-note { color: var(--muted); font-size: 13px; padding: 8px 0; }
@@ -291,32 +466,49 @@ select, input[type=search] {
    selects an ALGORITHM rather than a drop target, so it keeps its own class. */
 .mode-row {
   display: flex; border: 1px solid var(--border);
-  border-radius: 8px; overflow: hidden; align-self: flex-start;
+  border-radius: var(--rad); overflow: hidden; align-self: flex-start;
+  background: var(--panel-2);
 }
 .mode-row button {
-  background: var(--panel-2); color: var(--muted); border: none;
+  background: transparent; color: var(--muted); border: none;
   padding: 8px 14px; font-size: 13px; cursor: pointer;
-  font-family: inherit; white-space: nowrap;
+  font-family: var(--font-mono); letter-spacing: .06em; white-space: nowrap;
+  transition: background .15s, color .15s, box-shadow .15s;
 }
 .mode-row button + button { border-left: 1px solid var(--border); }
+.mode-row button:hover { color: var(--text); background: rgba(47, 240, 255, .06); }
 .mode-row button.active {
-  background: #1f6feb; color: #fff; font-weight: 600;
+  background: var(--cyan); color: #04121a; font-weight: 700;
+  box-shadow: 0 0 20px -4px rgba(47, 240, 255, .65);
 }
 
 .side-toggle {
   display: flex; border: 1px solid var(--border);
-  border-radius: 8px; overflow: hidden; flex: 0 0 auto;
+  border-radius: var(--rad); overflow: hidden; flex: 0 0 auto;
+  background: var(--panel-2);
 }
 .side-toggle button {
-  background: var(--panel-2); color: var(--muted); border: none;
+  background: transparent; color: var(--muted); border: none;
   padding: 8px 12px; font-size: 13px; cursor: pointer;
   font-family: inherit; white-space: nowrap;
+  transition: background .15s, color .15s;
 }
 .side-toggle button + button { border-left: 1px solid var(--border); }
-.side-toggle button.active {
-  background: #1f6feb; color: #fff; font-weight: 600;
+.side-toggle button:hover { color: var(--text); }
+.side-toggle button.active { color: #fff; font-weight: 600; }
+/* 三个落点各自的颜色，和上方面板的标题色对应 */
+.side-toggle button[data-side=our].active {
+  background: rgba(46, 230, 160, .2); color: var(--green);
+  box-shadow: inset 0 0 0 1px rgba(46, 230, 160, .45);
 }
-.side-toggle button[data-side=enemy].active { background: #a4322c; }
+.side-toggle button[data-side=enemy].active {
+  background: rgba(255, 92, 122, .2); color: var(--red);
+  box-shadow: inset 0 0 0 1px rgba(255, 92, 122, .45);
+}
+.side-toggle button[data-side=ban].active {
+  background: rgba(255, 207, 92, .18); color: var(--yellow);
+  box-shadow: inset 0 0 0 1px rgba(255, 207, 92, .45);
+}
 
 /* Icon-only grid: names and attribute letters were noise in a pool you
    navigate by recognising portraits, so the tiles are now square artwork.
@@ -325,19 +517,35 @@ select, input[type=search] {
   display: grid; gap: 5px; margin-top: 10px;
   grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
   align-content: start;
+  /* 极淡的网格底，让「池子」有仪器刻度盘的质感 */
+  background-image:
+    linear-gradient(rgba(47, 240, 255, .04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(47, 240, 255, .04) 1px, transparent 1px);
+  background-size: 22px 22px;
 }
 .pool-item {
   display: flex; align-items: center; justify-content: center;
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 3px; cursor: grab;
+  border-radius: var(--rad); padding: 3px; cursor: grab;
   aspect-ratio: 1 / 1; overflow: hidden;
+  transition: border-color .12s, box-shadow .12s, transform .12s;
 }
-.pool-item:hover { border-color: var(--accent); }
+.pool-item:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px -6px var(--cyan);
+}
+/* 抬升只在真正有指针悬停的设备上做：触屏上 :hover 会「粘住」，
+   粘住的位移比没有位移更糟。 */
+@media (hover: hover) and (pointer: fine) {
+  .pool-item:hover { transform: translateY(-1px); }
+}
 /* Tint the pool red while "加入敌方" is armed. */
-.pool.side-enemy .pool-item:hover { border-color: var(--red); }
-/* Tint grey while "ban位" is armed, so the tap target is never ambiguous. */
-.pool.side-ban .pool-item:hover { border-color: #a4322c; background: #241a1a; }
-.side-toggle button[data-side=ban].active { background: #a4322c; }
+.pool.side-enemy .pool-item:hover { border-color: var(--red); box-shadow: 0 0 16px -6px var(--red); }
+/* Tint amber while "ban位" is armed, so the tap target is never ambiguous. */
+.pool.side-ban .pool-item:hover {
+  border-color: var(--yellow); background: rgba(255, 207, 92, .1);
+  box-shadow: 0 0 16px -6px var(--yellow);
+}
 
 /* Long-press drives drag on touch, so suppress the OS callout/selection that
    iOS and Android would otherwise show. `touch-action: manipulation` keeps
@@ -353,39 +561,50 @@ select, input[type=search] {
 .pool-item img {
   width: 100%; height: 100%;
   object-fit: cover; object-position: center;
-  border-radius: 6px; display: block;
+  border-radius: 2px; display: block;
 }
 /* Assigned heroes stay in the pool as the "tap to take back" target, so they
    must remain clearly visible and obviously clickable rather than ghosted out. */
 .pool-item.used {
-  opacity: .55;
+  opacity: .5;
   border-style: dashed;
+  filter: grayscale(.55);
 }
-.pool-item.used:hover { opacity: .9; border-color: var(--yellow); }
+.pool-item.used:hover { opacity: .95; filter: none; border-color: var(--yellow); box-shadow: 0 0 16px -6px var(--yellow); }
 
 /* ---------- detail sheet ---------- */
 .sheet {
   position: fixed; inset: 0; z-index: 60;
-  background: rgba(0,0,0,.6);
+  background: rgba(2, 4, 7, .8);
+  backdrop-filter: blur(3px);
   display: flex; align-items: flex-end; justify-content: center;
 }
 @media (min-width: 720px) { .sheet { align-items: center; } }
 .sheet-inner {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 14px 14px 0 0; width: 100%; max-width: 620px;
+  background: linear-gradient(180deg, #0f1823, var(--panel));
+  border: 1px solid var(--border-hi);
+  border-top: 2px solid var(--cyan);
+  border-radius: var(--rad) var(--rad) 0 0;
+  width: 100%; max-width: 620px;
   max-height: 82vh; overflow-y: auto; padding: 16px;
   padding-bottom: calc(16px + env(safe-area-inset-bottom));
   position: relative;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, .7);
 }
-@media (min-width: 720px) { .sheet-inner { border-radius: 14px; } }
+@media (min-width: 720px) { .sheet-inner { border-radius: var(--rad); } }
 .sheet-close {
   position: absolute; top: 10px; right: 12px;
   background: none; border: none; color: var(--muted);
   font-size: 24px; cursor: pointer; line-height: 1;
+  transition: color .15s;
 }
+.sheet-close:hover { color: var(--red); }
 .detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.detail-head img { width: 56px; height: 56px; border-radius: 8px; }
-.detail-head h3 { margin: 0; font-size: 18px; }
+.detail-head img {
+  width: 56px; height: 56px; border-radius: 2px;
+  border: 1px solid var(--border-hi);
+}
+.detail-head h3 { margin: 0; font-size: 18px; letter-spacing: .02em; }
 .detail-head p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
 
 .score-grid {
@@ -393,25 +612,37 @@ select, input[type=search] {
 }
 .score-cell {
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 9px; text-align: center;
+  border-radius: var(--rad); padding: 9px; text-align: center;
 }
-.score-cell .k { font-size: 11px; color: var(--muted); }
-.score-cell .v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.score-cell .k {
+  font-size: 10px; color: var(--muted);
+  font-family: var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+}
+.score-cell .v {
+  font-size: 18px; font-weight: 700;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 14px rgba(47, 240, 255, .3);
+}
 
 table.mu { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.mu th {
   text-align: left; color: var(--muted); font-weight: 500;
-  font-size: 11px; padding: 6px 4px; border-bottom: 1px solid var(--border);
+  font-size: 10px; padding: 6px 4px; border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); letter-spacing: .1em; text-transform: uppercase;
 }
-table.mu td { padding: 6px 4px; border-bottom: 1px solid #21262d; }
-table.mu td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.mu td { padding: 6px 4px; border-bottom: 1px solid #16212d; }
+table.mu tr:last-child td { border-bottom: none; }
+table.mu td.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
 table.mu .who { display: flex; align-items: center; gap: 6px; }
-table.mu .who img { width: 22px; height: 22px; border-radius: 3px; }
+table.mu .who img { width: 22px; height: 22px; border-radius: 2px; }
 
 .note {
   margin-top: 14px; padding: 10px; font-size: 12px; line-height: 1.6;
   color: var(--muted); background: var(--panel-2);
-  border-left: 3px solid var(--yellow); border-radius: 4px;
+  border-left: 3px solid var(--yellow); border-radius: var(--rad);
 }
 
 /* ---------- data-source switcher (bottom-right) ---------- */
@@ -421,32 +652,33 @@ table.mu .who img { width: 22px; height: 22px; border-radius: 3px; }
   bottom: calc(12px + env(safe-area-inset-bottom));
   z-index: 40;
   display: flex;
-  background: rgba(22, 27, 34, .96);
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  background: rgba(9, 13, 20, .97);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--rad);
   padding: 3px;
   gap: 2px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
-  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .65), 0 0 26px -14px var(--cyan);
+  backdrop-filter: blur(10px);
   transition: opacity .15s, border-color .15s;
 }
 .source-fab button {
   background: transparent;
   color: var(--muted);
   border: none;
-  border-radius: 999px;
+  border-radius: 2px;
   padding: 7px 11px;
   font-size: 12px;
-  font-family: inherit;
+  font-family: var(--font-mono);
+  letter-spacing: .04em;
   cursor: pointer;
   white-space: nowrap;
   transition: background .15s, color .15s;
 }
-.source-fab button:hover { color: var(--text); }
+.source-fab button:hover { color: var(--text); background: rgba(47, 240, 255, .08); }
 .source-fab button.active {
-  background: #1f6feb;
-  color: #fff;
-  font-weight: 600;
+  background: var(--cyan);
+  color: #04121a;
+  font-weight: 700;
   cursor: default;
 }
 .source-fab.loading { opacity: .55; pointer-events: none; }
@@ -463,6 +695,7 @@ table.mu .who img { width: 22px; height: 22px; border-radius: 3px; }
   .rec img { width: 34px; height: 34px; }
   .rec-ban { padding: 2px 4px; font-size: 10px; }
   .mode-row button { padding: 8px 9px; font-size: 12px; }
+  .topbar h1 { font-size: 13px; letter-spacing: .1em; }
 }
 
 /* Explains a failed switch (e.g. the STRATZ file was never deployed). */
@@ -472,14 +705,14 @@ table.mu .who img { width: 22px; height: 22px; border-radius: 3px; }
   bottom: calc(58px + env(safe-area-inset-bottom));
   z-index: 41;
   max-width: min(320px, calc(100vw - 24px));
-  background: #2d1b1b;
+  background: #20121a;
   border: 1px solid var(--red);
-  border-radius: 10px;
+  border-radius: var(--rad);
   padding: 10px 12px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .6), 0 0 26px -12px var(--red);
   cursor: pointer;
 }
 
@@ -490,17 +723,26 @@ main { padding-bottom: 64px; }
 /* Uncapped, so it has no fixed slots: the icons just wrap. Muted red so it
    reads as "out of play" rather than as a third team. */
 .ban-panel {
-  border-color: #4a2d2d;
-  background: linear-gradient(var(--panel), #1b1416);
+  border-color: rgba(255, 92, 122, .35);
+  background: linear-gradient(180deg, rgba(32, 18, 26, .7), rgba(9, 13, 20, .92));
 }
-.ban-panel h3 { color: #ffa198; }
+.ban-panel::before {
+  background:
+    linear-gradient(var(--red), var(--red)) 0 0 / 11px 1px no-repeat,
+    linear-gradient(var(--red), var(--red)) 0 0 / 1px 11px no-repeat,
+    linear-gradient(var(--red), var(--red)) 100% 0 / 11px 1px no-repeat,
+    linear-gradient(var(--red), var(--red)) 100% 0 / 1px 11px no-repeat;
+  opacity: .45;
+}
+.ban-panel h3 { color: var(--red); }
 .ban-panel h3 span { color: var(--text); font-variant-numeric: tabular-nums; }
 .ban-panel h3 small {
   color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 4px;
+  letter-spacing: 0; text-transform: none; font-family: var(--font-ui);
 }
-.ban-panel .slot { border-color: #4a2d2d; }
+.ban-panel .slot { border-color: rgba(255, 92, 122, .3); }
 .ban-panel .slot:hover, .ban-panel .slot:focus-visible {
-  border-color: var(--red); background: #2a1a1a;
+  border-color: var(--red); background: rgba(255, 92, 122, .14);
 }
 .ban-panel.active-target { border-color: var(--red); }
 .ban-empty { color: var(--muted); font-size: 12px; }
@@ -540,12 +782,18 @@ body.dragging .slot { cursor: grabbing; }
 body.drag-active [data-drop="our"],
 body.drag-active [data-drop="enemy"],
 body.drag-active [data-drop="ban"] {
-  border-color: #3d5a7a;
+  border-color: var(--border-hi);
   border-style: dashed;
 }
-body.drag-active [data-drop="our"].drop-hover { border-color: var(--green); border-style: solid; }
-body.drag-active [data-drop="enemy"].drop-hover { border-color: var(--red); border-style: solid; }
-body.drag-active [data-drop="ban"].drop-hover { border-color: #a4322c; border-style: solid; }
+body.drag-active [data-drop="our"].drop-hover {
+  border-color: var(--green); border-style: solid; box-shadow: 0 0 26px -10px var(--green);
+}
+body.drag-active [data-drop="enemy"].drop-hover {
+  border-color: var(--red); border-style: solid; box-shadow: 0 0 26px -10px var(--red);
+}
+body.drag-active [data-drop="ban"].drop-hover {
+  border-color: var(--yellow); border-style: solid; box-shadow: 0 0 26px -10px var(--yellow);
+}
 /* Follows the pointer. pointer-events:none is essential — otherwise
    elementFromPoint() would hit the ghost instead of the drop zone. */
 .drag-ghost {
@@ -555,11 +803,21 @@ body.drag-active [data-drop="ban"].drop-hover { border-color: #a4322c; border-st
   display: flex; align-items: center; gap: 7px;
   padding: 6px 10px;
   background: var(--panel-2);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
+  border: 1px solid var(--cyan);
+  border-radius: var(--rad);
   font-size: 13px; font-weight: 600;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
-  opacity: .95;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .65), 0 0 22px -8px var(--cyan);
+  opacity: .96;
 }
-.drag-ghost img { width: 26px; height: 26px; border-radius: 4px; }
+.drag-ghost img { width: 26px; height: 26px; border-radius: 2px; }
 
+/* ---------- 减少动态效果 ---------- */
+/* 老式 CRT 的味道有一半来自「会动」，但对前庭敏感的用户要能一键关掉。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  .pool-item:hover { transform: none; }
+}
