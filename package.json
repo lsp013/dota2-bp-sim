@@ -12,7 +12,7 @@
     "stratz": "node scripts/build-stratz.mjs",
     "sync": "node scripts/sync-lib.mjs",
     "serve": "node scripts/serve.mjs",
-    "test": "node --test tests/",
-    "test:direct": "node tests/wilson.test.mjs && node tests/recommend.test.mjs && node tests/draft.test.mjs && node tests/ui.test.mjs"
+    "test": "node --test tests/wilson.test.mjs tests/heroNames.test.mjs tests/dataset.test.mjs tests/verdict.test.mjs tests/cursor.test.mjs tests/recommend.test.mjs tests/draft.test.mjs tests/merge.test.mjs tests/ui.test.mjs",
+    "test:direct": "node tests/wilson.test.mjs && node tests/heroNames.test.mjs && node tests/dataset.test.mjs && node tests/verdict.test.mjs && node tests/cursor.test.mjs && node tests/recommend.test.mjs && node tests/draft.test.mjs && node tests/merge.test.mjs && node tests/ui.test.mjs"
   }
 }

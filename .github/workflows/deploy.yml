@@ -33,8 +33,12 @@ jobs:
           node-version: '20'
 
       # No `npm install` needed: the project has zero runtime dependencies.
+      # Runs the same `npm test` the README tells you to run. The test files are
+      # listed explicitly in package.json because `node --test tests/` (a
+      # directory argument) stopped working on Node 24 while globs never worked
+      # on Node 20 — an explicit list is the only form both accept.
       - name: Run tests
-        run: node --test tests/
+        run: npm test
 
       - name: Fetch data
         run: node scripts/fetch-data.mjs
