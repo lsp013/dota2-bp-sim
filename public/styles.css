@@ -2,7 +2,7 @@
    Dota 2 BP 模拟器 — 视觉层
    --------------------------------------------------------------------------
    风格：Retro-Futurism / CRT 终端（复古未来主义）
-     · 近黑底色 + 青/品红霓虹 + 扫描线
+     · 近黑底色 + 青/品红霓虹
      · 数字与拉丁字母用等宽字，中文用系统黑体兜底
      · 方角、细边框、角落括线（corner bracket）代替大圆角卡片
 
@@ -64,22 +64,9 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* CRT 扫描线。全局覆盖，pointer-events:none 保证不挡点击，
-   z-index 压在弹层之上（扫描线是「屏幕」属性，不是内容属性），
-   但仍低于拖拽幽灵，免得拖动中的小卡片变糊。 */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 800;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    180deg,
-    rgba(0, 0, 0, .32) 0 1px,
-    rgba(0, 0, 0, 0) 1px 4px
-  );
-  opacity: .55;
-}
+/* 曾经这里有一层全局 CRT 扫描线（body::after 的 repeating-linear-gradient）。
+   已移除：1px 的横纹盖在文字和小图标上，在手机上尤其糊，读起来很累。
+   年代感改由底色的霓虹光晕、等宽标题、角落括线承担——这些不影响可读性。 */
 
 /* 选中文字用反色块——像终端里的光标块，比半透明高亮更有年代感 */
 ::selection { background: var(--magenta); color: #0a0410; }
